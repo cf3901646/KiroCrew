@@ -6714,6 +6714,8 @@
       "use_starting_directory_hint": "Abre un shell nuevo en el directorio de terminal configurado en el servidor (dashboard.terminal.cwd o, si no existe, el directorio personal del servidor). El comando fallido no se vuelve a enviar."
     },
     "codeBlock": {
+      "add_comment": "Añadir comentario",
+      "comment_thread": "Hilo de comentarios ({{count}})",
       "copied": "¡Copiado!",
       "copy": "Copiar",
       "generating": "generando…"

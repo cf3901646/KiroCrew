@@ -6602,6 +6602,8 @@
       "use_starting_directory_hint": "Öffnet eine neue Shell im konfigurierten Terminalverzeichnis des Servers (dashboard.terminal.cwd, sonst das Home-Verzeichnis des Servers). Der fehlgeschlagene Befehl wird nicht erneut gesendet."
     },
     "codeBlock": {
+      "add_comment": "Kommentar hinzufügen",
+      "comment_thread": "Kommentar-Thread ({{count}})",
       "copied": "Kopiert!",
       "copy": "Kopieren",
       "generating": "wird erstellt…"

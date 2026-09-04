@@ -6714,6 +6714,8 @@
       "use_starting_directory_hint": "Apre una nuova shell nella directory del terminale configurata sul server (dashboard.terminal.cwd, altrimenti la directory home del server). Il comando non riuscito non viene reinviato."
     },
     "codeBlock": {
+      "add_comment": "Aggiungi commento",
+      "comment_thread": "Discussione commenti ({{count}})",
       "copied": "Copiato!",
       "copy": "Copia",
       "generating": "generazione…"

@@ -6490,6 +6490,8 @@
       "use_starting_directory_hint": "サーバーで設定されたターミナルのディレクトリ（dashboard.terminal.cwd、未設定ならサーバーのホームディレクトリ）で新しいシェルを開きます。失敗したコマンドは再送されません。"
     },
     "codeBlock": {
+      "add_comment": "コメントを追加",
+      "comment_thread": "コメントスレッド（{{count}}）",
       "copied": "コピーしました！",
       "copy": "コピー",
       "generating": "生成中…"

@@ -1709,7 +1709,27 @@ exactness contract as the frontend highlighter). Threads whose quote is
 gone get `anchor_orphaned=true` (a dedicated field, deliberately not a
 `sync_state` value so push status is never clobbered); the flag clears if
 the text returns (e.g. a revert). The UI shows a warning and de-emphasizes
-orphaned threads.
+orphaned threads. The rescan reads `anchor_quote` only: it never rewrites
+`start_offset`, `end_offset`, `prefix` or `suffix`.
+
+**Two anchor offset spaces** — the stored anchor columns carry one of two
+conventions, told apart by the anchor's context rather than by a kind field:
+
+- *Prose anchors* (a text selection in the rendered markdown or text body)
+  store offsets into the RENDERED text and up to 32 chars of rendered-text
+  `prefix`/`suffix` (iframe-bridge anchors store the frame's text context
+  and no offsets).
+- *Code-line anchors* (a line range picked in a markdown code block's
+  gutter, `website/src/components/codeComments.ts`) store offsets into the
+  artifact SOURCE, the exact source lines as `quote`, and raw-source
+  `prefix`/`suffix` of up to 32 chars.
+
+The dashboard routes a comment to a code block only when its raw-source
+prefix matches the source around the quote inside a fence (offset-pinned
+first, then a prefix-gated search when an edit shifted the fence); every
+other anchor stays prose. A writer that ever rewrites offsets or context
+(the rescan, a provider sync, a new capture path) must keep each anchor in
+its own space, or threads move between prose and code.
 
 **Activity feed** — comment lifecycle changes append a `comment` event
 (`ALLOWED_EVENT_TYPES`) to the artifact's audit log with

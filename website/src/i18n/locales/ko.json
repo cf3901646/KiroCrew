@@ -6490,6 +6490,8 @@
       "use_starting_directory_hint": "서버에 설정된 터미널 디렉터리(dashboard.terminal.cwd, 없으면 서버의 홈 디렉터리)에서 새 셸을 엽니다. 실패한 명령은 다시 보내지 않습니다."
     },
     "codeBlock": {
+      "add_comment": "댓글 추가",
+      "comment_thread": "댓글 스레드 ({{count}})",
       "copied": "복사했습니다!",
       "copy": "복사",
       "generating": "생성 중…"

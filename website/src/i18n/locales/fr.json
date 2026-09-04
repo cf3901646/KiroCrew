@@ -6714,6 +6714,8 @@
       "use_starting_directory_hint": "Ouvre un nouveau shell dans le répertoire de terminal configuré sur le serveur (dashboard.terminal.cwd, sinon le répertoire personnel du serveur). La commande échouée n’est pas renvoyée."
     },
     "codeBlock": {
+      "add_comment": "Ajouter un commentaire",
+      "comment_thread": "Fil de commentaires ({{count}})",
       "copied": "Copié !",
       "copy": "Copier",
       "generating": "génération…"
