@@ -80,6 +80,11 @@ def _slugify(text: str) -> str:
     return slug or "default"
 
 
+#: Longest readable workspace-key prefix: with ``__`` and the 10-char digest the key
+#: stays under 255 bytes (the slug is ASCII).
+_READABLE_KEY_MAX = 240
+
+
 def workspace_key(config: dict | None = None) -> str:
     """The repository+branch this run's findings belong to.
 
@@ -105,6 +110,11 @@ def workspace_key(config: dict | None = None) -> str:
     # Lower-cased before hashing because GitHub repository names are case-insensitive, so
     # `owner/A-B` and `owner/a-b` must keep sharing one workspace. Raised by the GPT review.
     digest = hashlib.sha256(f"{repo.lower()}\x00{branch}".encode("utf-8")).hexdigest()[:10]
+    # A GitLab project path can be several hundred characters, so the readable part is
+    # cut when the key would pass the 255-byte filename limit. Only keys that could not
+    # exist on disk are cut, so every existing workspace keeps its key; the digest
+    # still separates the cut ones.
+    readable = readable[:_READABLE_KEY_MAX]
     return f"{readable}__{digest}"
 
 
