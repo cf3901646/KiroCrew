@@ -4682,9 +4682,9 @@
     },
     "instanceTabBar": {
       "chain_via": "{{via}} › {{name}}",
+      "add_remote_crew": "Add remote crew",
       "instances": "Remote crews",
       "local": "Local",
-      "local_dashboard": "Local dashboard",
       "n_unread": "{{n}} unread",
       "switch_crew": "Switch crew",
       "switch_crew_unread": "Switch crew, {{n}} unread elsewhere",
