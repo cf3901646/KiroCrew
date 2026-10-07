@@ -1350,6 +1350,10 @@ class AcpRuntime:
         # descendant survived. Consumers use it to decide whether a work
         # directory is safe to reclaim.
         self._process_tree_confirmed_dead = False
+        # The last teardown's own verdict: whether it proved the root dead, and
+        # the descendants it left alive for the orphan sweep (see ``kill``).
+        self._teardown_root_dead = False
+        self._teardown_survivors: dict[int, ChildRecord] = {}
         self._death_summary: str | None = None
         # The composed summary's parts, so the post-reap amendment rebuilds the
         # line instead of editing its text -- a tail carrying this format's own
@@ -1977,6 +1981,8 @@ class AcpRuntime:
         if self._process is not None:
             raise AcpRuntimeError("Runtime already spawned")
         self._process_tree_confirmed_dead = False
+        self._teardown_root_dead = False
+        self._teardown_survivors = {}
 
         admission = runtime_start._cold_start_admission()
         notify_start_queue(logger, on_gate_queued, START_QUEUE_ADMISSION)
@@ -2131,6 +2137,8 @@ class AcpRuntime:
         self._scratch_dir = None
         self._dead = False
         self._process_tree_confirmed_dead = False
+        self._teardown_root_dead = False
+        self._teardown_survivors = {}
         self._death_summary = None
         self._death_reason = ""
         self._death_label = ""
@@ -2841,12 +2849,16 @@ class AcpRuntime:
                 await asyncio.sleep(0.05)
         except Exception:
             self._process_tree_confirmed_dead = False
+            # Inconclusive: no later kill may read the tree as confirmed.
+            self._teardown_root_dead = False
             logger.warning(
                 "AcpRuntime: could not reap the descendants of a failed start", exc_info=True
             )
             return
         if survivors:
             self._process_tree_confirmed_dead = False
+            # Left for a later kill to re-check, with the kill's own survivors.
+            self._teardown_survivors.update({pid: escapees[pid] for pid in survivors})
             logger.warning(
                 "AcpRuntime: %d descendant PID(s) of a failed start survived SIGKILL; "
                 "left tracked for the orphan sweep: %s",
@@ -3233,9 +3245,27 @@ class AcpRuntime:
         self._process_tree_confirmed_dead = False
         try:
             await self._kill_inner(expected=expected, reason=reason)
+            if self._process is None and self._teardown_root_dead:
+                await self._recheck_teardown_survivors()
         finally:
             self._discard_sandbox_cleanup()
             await self._discard_bound_workspace()
+
+    async def _recheck_teardown_survivors(self) -> None:
+        """Re-read the last teardown's verdict on a kill that found no process.
+
+        That teardown proved the root dead and left its surviving descendants
+        tracked for the orphan sweep, so a repeat kill has nothing to signal and
+        would otherwise leave ``_process_tree_confirmed_dead`` False for good,
+        even after the sweep (or the descendant itself) has ended them. Each
+        survivor is pruned by its own recorded identity, as the teardown did.
+        """
+        if self._teardown_survivors:
+            alive = await asyncio.to_thread(_prune_dead_descendants, dict(self._teardown_survivors))
+            self._teardown_survivors = {
+                pid: rec for pid, rec in self._teardown_survivors.items() if pid in alive
+            }
+        self._process_tree_confirmed_dead = not self._teardown_survivors
 
     async def _kill_inner(self, *, expected: bool = False, reason: str = "") -> None:
         """Kill the subprocess and clean up all state.
@@ -3325,6 +3355,8 @@ class AcpRuntime:
             # the placeholder true for a tree it could not confirm.
             self._note_reaped_after_kill(process.returncode)
             self._process_tree_confirmed_dead = process.returncode is not None
+            self._teardown_root_dead = process.returncode is not None
+            self._teardown_survivors = {}
             self._process = None
             self._process_instance = ""
             self._scope_unit = ""
@@ -3458,6 +3490,10 @@ class AcpRuntime:
                         survivors,
                     )
             self._process_tree_confirmed_dead = root_confirmed_dead and not survivors
+            # Kept so a later kill that finds no process can re-read the verdict
+            # once the orphan sweep (or the descendant itself) has ended them.
+            self._teardown_root_dead = root_confirmed_dead
+            self._teardown_survivors = {pid: saved_children[pid] for pid in survivors}
 
     # ── Reader Task (single owner of stdout) ──
 
