@@ -19323,6 +19323,8 @@
       "saving": "正在保存…",
       "conflict": "该文件已在工作区中更改，因此未保存。编辑内容已保留：先用“复制我的编辑”留一份副本，然后选择“放弃更改”并点击“刷新”（文件列表顶部的 ⟳ 按钮）以加载新版本。",
       "openTerminal": "在此工作区中打开终端",
+      "cloudSandbox": "此聊天在 Kiro 云沙盒中运行，因此无法在此显示其文件和 Git。",
+      "cloudSandboxRefused": "无法打开此聊天的文件，因为它在 Kiro 云沙盒中运行，只有它自己的智能体可以访问。",
       "copyEdits": "复制我的编辑"
     },
     "verifyHint": "检查本机的 Coder CLI 是否已登录、每个配置文件的模板是否存在，以及本机已登录哪些 Git 主机。不会启动任何资源，也不会读取任何凭据。",
@@ -19353,6 +19355,22 @@
     "stopOnShutdownHint": "开启：{{productName}} 关闭时会停止你的工作区。关闭：它们会继续运行，因此重启后聊天重新连接更快。Coder 自身的自动停止仍然适用。",
     "computeSurvivesStop": "停止后工作区保留其文件",
     "computeSurvivesStopHint": "开启：不需要时 {{productName}} 会停止工作区。关闭：它会持续运行，因为停止会丢失文件。",
+    "kiroCloud": {
+      "replayed": "无法重新打开云端会话，因此已启动一个延续此对话的新沙盒。之前沙盒中的文件和更改不在其中。之前的会话仍列在 Kiro Web (app.kiro.dev) 中。",
+      "title": "Kiro Cloud Sessions",
+      "profilesHint": "在 Kiro 云沙盒中运行整个会话（智能体及其文件和命令）的配置方案。在消息框旁边，用环境菜单为会话选择配置方案。",
+      "notVerified": "这些配置方案不会预先检查。云聊天无法启动时，聊天中会说明原因。",
+      "setup1": "在“设置 → {{tab}}”中选择 {{backend}} 后端，并使用拥有 Kiro Cloud Sessions 的账号登录 Kiro。",
+      "setup2": "以 owner/name 形式列出沙盒要打开的仓库。列表为空时会打开一个空工作区。",
+      "repositories": "仓库",
+      "repositoriesHint": "以逗号分隔，采用 owner/name 形式（例如 acme/web），最多 {{max}} 个。留空则使用空工作区。",
+      "emptyWorkspace": "空工作区",
+      "profiles": "Kiro Cloud 配置方案",
+      "limits": "云端智能体会直接运行命令，不会事先询问你，并且无法使用你在 {{productName}} 中设置的工具和连接。",
+      "setup": "Kiro Cloud 设置说明",
+      "add": "添加 Kiro Cloud 配置方案",
+      "remove": "移除 Kiro Cloud 配置方案"
+    },
     "checkCoderLogin": "要登录，请在本机的终端中运行 <code>coder login</code>。"
   },
   "crewEditorNext": {

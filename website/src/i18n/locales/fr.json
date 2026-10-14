@@ -19893,6 +19893,8 @@
       "saving": "Enregistrement…",
       "conflict": "Le fichier a changé dans l’espace de travail, il n’a donc pas été enregistré. Tes modifications sont conservées : utilise Copier mes modifications pour en garder une copie, puis choisis Abandonner les modifications et Actualiser (le bouton ⟳ en haut de la liste des fichiers) pour charger la nouvelle version.",
       "openTerminal": "Ouvrir un terminal dans cet espace de travail",
+      "cloudSandbox": "Ce chat s’exécute dans un bac à sable cloud Kiro : ses fichiers et son Git ne peuvent donc pas être affichés ici.",
+      "cloudSandboxRefused": "Impossible d’ouvrir les fichiers de ce chat, car il s’exécute dans un bac à sable cloud Kiro, accessible uniquement à son propre agent.",
       "copyEdits": "Copier mes modifications"
     },
     "verifyHint": "Vérifie que la CLI Coder de cette machine est connectée, que le modèle de chaque profil existe et sur quels hôtes Git cette machine est connectée. Rien n’est démarré et aucun identifiant n’est lu.",
@@ -19923,6 +19925,22 @@
     "stopOnShutdownHint": "Activé : {{productName}} arrête tes espaces de travail quand il s’arrête. Désactivé : ils continuent de tourner, donc les chats se reconnectent plus vite après un redémarrage. L’arrêt automatique propre à Coder s’applique toujours.",
     "computeSurvivesStop": "L’espace de travail garde ses fichiers à l’arrêt",
     "computeSurvivesStopHint": "Activé : {{productName}} arrête l’espace de travail quand il n’est pas nécessaire. Désactivé : il continue de tourner, car l’arrêter perdrait des fichiers.",
+    "kiroCloud": {
+      "replayed": "Impossible de rouvrir la session cloud, un nouveau bac à sable a donc été démarré en reprenant cette conversation. Les fichiers et modifications de l’ancien bac à sable n’y figurent pas. L’ancienne session reste listée dans Kiro Web (app.kiro.dev).",
+      "title": "Kiro Cloud Sessions",
+      "profilesHint": "Profils qui exécutent toute la session dans un bac à sable cloud Kiro : l’agent, ses fichiers et ses commandes. Choisis-en un pour une session depuis le menu d’environnement à côté de la zone de message.",
+      "notVerified": "Ces profils ne sont pas vérifiés à l’avance. Si un chat cloud ne peut pas démarrer, le chat en explique la raison.",
+      "setup1": "Dans Paramètres → {{tab}}, choisis le backend {{backend}} et connecte-toi à Kiro avec un compte qui dispose de Kiro Cloud Sessions.",
+      "setup2": "Indique les dépôts que le bac à sable doit ouvrir, au format owner/name. Une liste vide ouvre un espace de travail vide.",
+      "repositories": "Dépôts",
+      "repositoriesHint": "Séparés par des virgules, au format owner/name (ex. acme/web), {{max}} au maximum. Laisse le champ vide pour un espace de travail vide.",
+      "emptyWorkspace": "Espace de travail vide",
+      "profiles": "Profils Kiro Cloud",
+      "limits": "L’agent cloud exécute des commandes sans te demander ton accord, et ne peut pas utiliser les outils et connexions que tu as configurés dans {{productName}}.",
+      "setup": "Instructions de configuration de Kiro Cloud",
+      "add": "Ajouter un profil Kiro Cloud",
+      "remove": "Supprimer le profil Kiro Cloud"
+    },
     "checkCoderLogin": "Pour te connecter, lance <code>coder login</code> dans un terminal de cette machine."
   },
   "crewEditorNext": {

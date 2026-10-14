@@ -19893,6 +19893,8 @@
       "saving": "Salvando…",
       "conflict": "O arquivo mudou no workspace, então não foi salvo. Suas edições foram mantidas: use Copiar minhas edições para guardar uma cópia e depois escolha Descartar alterações e Atualizar (o botão ⟳ no topo da lista de arquivos) para carregar a nova versão.",
       "openTerminal": "Abrir um terminal neste workspace",
+      "cloudSandbox": "Este chat é executado em um sandbox na nuvem do Kiro, então os arquivos e o Git dele não podem ser mostrados aqui.",
+      "cloudSandboxRefused": "Não foi possível abrir os arquivos deste chat porque ele é executado em um sandbox na nuvem do Kiro, que só o próprio agente dele alcança.",
       "copyEdits": "Copiar minhas edições"
     },
     "verifyHint": "Verifica se a CLI do Coder desta máquina está conectada, se o modelo de cada perfil existe e em quais hosts Git esta máquina está conectada. Nada é iniciado e nenhuma credencial é lida.",
@@ -19923,6 +19925,22 @@
     "stopOnShutdownHint": "Ligado: o {{productName}} para seus workspaces ao ser desligado. Desligado: eles continuam em execução, então os chats reconectam mais rápido após um reinício. A parada automática do próprio Coder continua valendo.",
     "computeSurvivesStop": "O workspace mantém os arquivos ao parar",
     "computeSurvivesStopHint": "Ligado: o {{productName}} para o workspace quando ele não é necessário. Desligado: ele continua em execução, porque parar perderia arquivos.",
+    "kiroCloud": {
+      "replayed": "Não foi possível reabrir a sessão na nuvem, então um novo sandbox foi iniciado dando continuidade a esta conversa. Os arquivos e as alterações do sandbox anterior não estão nele. A sessão anterior continua listada no Kiro Web (app.kiro.dev).",
+      "title": "Kiro Cloud Sessions",
+      "profilesHint": "Perfis que executam a sessão inteira em um sandbox na nuvem do Kiro: o agente, seus arquivos e seus comandos. Escolha um para uma sessão no menu de ambiente ao lado da caixa de mensagem.",
+      "notVerified": "Estes perfis não são verificados com antecedência. Se um chat na nuvem não puder iniciar, o chat explica o motivo.",
+      "setup1": "Em Configurações → {{tab}}, escolha o backend {{backend}} e entre no Kiro com uma conta que tenha Kiro Cloud Sessions.",
+      "setup2": "Liste os repositórios que o sandbox deve abrir, no formato owner/name. Uma lista vazia abre um workspace vazio.",
+      "repositories": "Repositórios",
+      "repositoriesHint": "Separados por vírgulas, no formato owner/name (ex.: acme/web), no máximo {{max}}. Deixe vazio para um workspace vazio.",
+      "emptyWorkspace": "Workspace vazio",
+      "profiles": "Perfis do Kiro Cloud",
+      "limits": "O agente na nuvem executa comandos sem pedir sua confirmação antes e não pode usar as ferramentas e conexões que você configurou no {{productName}}.",
+      "setup": "Instruções de configuração do Kiro Cloud",
+      "add": "Adicionar perfil do Kiro Cloud",
+      "remove": "Remover perfil do Kiro Cloud"
+    },
     "checkCoderLogin": "Para entrar, execute <code>coder login</code> em um terminal desta máquina."
   },
   "crewEditorNext": {

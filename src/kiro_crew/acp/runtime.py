@@ -70,6 +70,7 @@ from kiro_crew.acp.harness import (
     harness_for,
 )
 from kiro_crew.acp.harness.kas import PROTOCOL_VERSION_KAS
+from kiro_crew.acp.harness.kas_cloud import CloudResumeHold, KasCloudSandboxHarness
 from kiro_crew.acp.harness.kiro import KIRO_CLI_SUBCMD, PROTOCOL_VERSION
 from kiro_crew.acp.kas_agents import hoist_managed_servers
 from kiro_crew.acp.kas_host_auth import HostAuthCallbackError
@@ -2021,6 +2022,35 @@ class AcpRuntime:
             return
         raise AcpRuntimeError(REMOTE_NEEDS_KAS)
 
+    @property
+    def is_cloud_sandbox(self) -> bool:
+        return isinstance(self._harness_resolved, KasCloudSandboxHarness)
+
+    def set_cloud_sandbox(self, repositories: tuple[str, ...] | list[str] = ()) -> None:
+        """Run this runtime's sessions in a Kiro cloud sandbox (Kiro Cloud Sessions).
+
+        Installs :class:`~kiro_crew.acp.harness.kas_cloud.KasCloudSandboxHarness` as
+        this runtime's harness, which answers request shaping, agent selection and
+        readiness for every session the runtime starts; see that module for what
+        the sandbox does and does not receive. The runtime is also declared
+        MCP-free, because it sends no servers. KAS only, and before the spawn.
+        """
+        self.check_remote_workspace_supported()
+        self._harness_resolved = KasCloudSandboxHarness(repositories)
+        self._expect_mcp_reports = False
+
+    def hold_cloud_resume(self, session_id: str) -> CloudResumeHold:
+        """Hold the approvals KAS replays while *session_id* reopens in the cloud.
+
+        Asked only by the provider's cloud start path, around its reopen, on a
+        runtime :meth:`set_cloud_sandbox` configured; settle the hold with the
+        loaded handle (``None`` on failure) once the reopen finished.
+        """
+        harness = self._harness_resolved
+        if not isinstance(harness, KasCloudSandboxHarness):
+            raise AcpRuntimeError("a cloud resume hold needs a cloud-sandbox runtime")
+        return harness.resume_hold(session_id)
+
     def _remote_session_servers(self, servers: list[Any]) -> list[Any]:
         """The session's MCP array: unchanged, plus the remote workspace server."""
         if self._remote_workspace is None:
@@ -3912,6 +3942,9 @@ class AcpRuntime:
         At capacity the shared admission wait either observes progress or
         marks the runtime dead so the requester cannot remain unanswered.
         """
+        # Asked before the capacity wait, so the host answers from its state at
+        # the moment the frame arrived.
+        answer = self._harness.unroutable_permission(self, msg, session_id, reason=reason)
         if not await self._wait_for_answer_capacity(
             msg,
             request_kind="permission",
@@ -3919,9 +3952,7 @@ class AcpRuntime:
             audit_reason="answer_task_cap_runtime_dead",
         ):
             return
-        _t = asyncio.ensure_future(
-            self._answer_unroutable_permission(msg, session_id, reason=reason)
-        )
+        _t = asyncio.ensure_future(answer())
         self._answer_tasks.add(_t)
         _t.add_done_callback(self._answer_tasks.discard)
 
@@ -4409,7 +4440,13 @@ class AcpRuntime:
                     # Broadcasting a known-but-unregistered session's frame to
                     # every other session would be cross-talk.
                     queue = self._session_queues.get(session_id)
-                    if queue is not None:
+                    if (
+                        msg.id is not None
+                        and msg.is_method(METHOD_REQUEST_PERMISSION)
+                        and self._harness.holds_replayed_permission(session_id)
+                    ):
+                        await self._spawn_answer_task(msg, session_id)
+                    elif queue is not None:
                         if msg.is_method(METHOD_AGENT_SWITCHED):
                             self._note_switched_model(session_id, msg.params)
                         await queue.put(msg)
@@ -5616,6 +5653,21 @@ class AcpRuntime:
     def _unadopted_skill_projection_generation(self) -> int:
         return int(getattr(self, "_skill_projection_unadopted", 0))
 
+    @property
+    def _unclaimed_new_sessions(self) -> set[str]:
+        """Ids a ``session/new`` answered that no caller holds a handle for yet.
+
+        Tearing one down frees it on the backend even under a local-only teardown
+        policy: nothing records the id, so nothing could reopen it. ``session/load``
+        never adds here, so a failed reopen keeps its session. Created on first
+        use, like the projection counter above, so a runtime built without
+        ``__init__`` reads an empty set.
+        """
+        found = self.__dict__.get("_unclaimed_new_session_ids")
+        if found is None:
+            found = self.__dict__["_unclaimed_new_session_ids"] = set()
+        return found
+
     def _adopt_skill_projection(self, prepared: Any, generation: int) -> bool:
         """Make *prepared* this runtime's projection unless a newer one was adopted.
 
@@ -5955,7 +6007,9 @@ class AcpRuntime:
         else:
             self._turn_active_sessions.discard(session_id)
 
-    async def terminate_session(self, session_id: str) -> None:
+    async def terminate_session(
+        self, session_id: str, *, delete_cloud_session: bool = False
+    ) -> None:
         """Evict a session from kiro-cli (freeing its memory), then unregister locally.
 
         Sends the ``_kiro.dev/session/terminate`` request so the multiplexed
@@ -5988,6 +6042,9 @@ class AcpRuntime:
         try:
             if not self._dead and self._process is not None:
                 policy = self._harness.teardown
+                unclaimed = session_id in self._unclaimed_new_sessions
+                if policy.local_only and not (delete_cloud_session or unclaimed):
+                    return
                 try:
                     if policy.notification:
                         # A verb the host does not answer. Awaiting a reply here would
@@ -6009,6 +6066,7 @@ class AcpRuntime:
                         exc_info=True,
                     )
         finally:
+            self._unclaimed_new_sessions.discard(session_id)
             self.unregister_session(session_id)
 
     def _session_teardown_method(self) -> str:
@@ -7725,6 +7783,11 @@ class AcpRuntime:
             mcp_servers=wire_servers,
             kas_custom_agents=kas_agents,
         )
+        # The host's last word on the request and on the agent it activates
+        # (harness-parity H13): every served host returns both unchanged.
+        params, agent = self._harness.session_request(
+            METHOD_SESSION_NEW, params, agent, agent_capabilities=self._agent_capabilities
+        )
 
         projected_sources: dict[str, str] = {}
         if self._member_context:
@@ -7996,6 +8059,8 @@ class AcpRuntime:
         """
         if self._dead or self._process is None:
             return
+        # A late ``session/new`` answer nobody adopted: nothing records the id.
+        self._unclaimed_new_sessions.add(session_id)
         await self.terminate_session(session_id)
 
     def start_collectors(self) -> list[StartCollector]:
@@ -8121,6 +8186,9 @@ class AcpRuntime:
         self._session_queues[session_id] = queue
         for msg in buffered_init:
             queue.put_nowait(msg)
+        # Unclaimed until the handle is returned: every refusal arm below tears
+        # the session down, and with no handle out nothing could reopen it.
+        self._unclaimed_new_sessions.add(session_id)
 
         # Resolve the watchdog snapshot OFF the loop before constructing the
         # handle: the load is config file reads + jsonschema validation on a
@@ -8348,6 +8416,7 @@ class AcpRuntime:
             await self.terminate_session(session_id)
             raise
 
+        self._unclaimed_new_sessions.discard(session_id)
         logger.info("Created session %s on runtime PID %d", session_id, self._pid or 0)
         return handle
 
@@ -8466,7 +8535,9 @@ class AcpRuntime:
             finally:
                 if session_id:
                     # Evict the probe session from the shared process; never
-                    # raises (best-effort by contract).
+                    # raises (best-effort by contract). Nothing records the probe's
+                    # id, so it is freed on the backend even where teardown is local.
+                    self._unclaimed_new_sessions.add(session_id)
                     await self.terminate_session(session_id)
             # A non-empty answer updates the stored result and its OWN clock, so
             # it is replayed until that clock expires. An empty answer leaves the
@@ -8709,6 +8780,14 @@ class AcpRuntime:
             load_params["mcpServers"] = wire_servers
             kas_agents = self._remote_workspace_agents(kas_agents, wire_servers)
             attach_kas_custom_agents(load_params, kas_agents)
+            # The same last word session/new gets, asked inside this branch so the
+            # kiro resume path still stops at the comparison above.
+            load_params, agent = self._harness.session_request(
+                METHOD_SESSION_LOAD,
+                load_params,
+                agent,
+                agent_capabilities=self._agent_capabilities,
+            )
         budget = await self._session_start_budget()
         self._session_inits_in_flight += 1
         loaded_session_id = ""

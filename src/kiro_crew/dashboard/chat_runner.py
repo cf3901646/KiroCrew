@@ -489,6 +489,7 @@ from kiro_crew.dashboard.chat_turn.turn_spec_hooks import (
     _fire,
     _prepare_spec_hooks,
     _surface_agent_welcome,
+    _surface_startup_notice,
 )
 from kiro_crew.dashboard.chat_turn.turn_stats import (  # noqa: F401
     _MAX_MODEL_ID_LEN,
@@ -3307,6 +3308,7 @@ async def _run_chat(
             needs_session_reset = True
             slot.append("error", refusal, "msg msg-err", meta={"kind": APP_AGENT_REFUSED_KIND})
             return
+        _surface_startup_notice(state, slot, client)
         # The acquired provider is the final authority for harness-specific slash
         # gates. A dead live row can be replaced during the get_or_create call
         # above. The positive capability fails closed for unknown adapters and

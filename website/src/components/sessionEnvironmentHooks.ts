@@ -29,7 +29,7 @@ export const slotEnvironmentQueryKey = (slot: string) => ['slot-environment', sl
  *  the fetch's options, and one failed read must not replace a local chat's Files. */
 export const SLOT_ENVIRONMENT_RETRY = { retry: 2, retryDelay: 250 } as const
 
-type RemoteEnvironment = { profile: string; name: string; workdir: string }
+type RemoteEnvironment = { profile: string; name: string; workdir: string; provider?: string }
 
 /** Only an explicit successful local placement permits gateway file/shell access.
  *  Undefined means unread, loading or failed, including a failed refresh of a
@@ -48,8 +48,8 @@ export function useSlotEnvironmentPlacement(slot: string | null | undefined) {
     if (!slot || !isSuccess) return undefined
     if (id === null) return null
     if (typeof id !== 'string' || !id) return undefined
-    return { profile: id, name: match?.name ?? id, workdir: match?.workdir ?? '' }
-  }, [slot, isSuccess, id, match?.name, match?.workdir])
+    return { profile: id, name: match?.name ?? id, workdir: match?.workdir ?? '', provider: data?.provider ?? match?.provider }
+  }, [slot, isSuccess, id, match?.name, match?.workdir, data?.provider, match?.provider])
   return { remote, error }
 }
 

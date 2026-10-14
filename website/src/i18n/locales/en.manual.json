@@ -9745,6 +9745,8 @@
       "saving": "Saving…",
       "conflict": "The file changed in the workspace, so it was not saved. Your edits are kept: use Copy my edits to keep a copy, then choose Discard changes and Refresh (the ⟳ button at the top of the file list) to load the new version.",
       "openTerminal": "Open a terminal in this workspace",
+      "cloudSandbox": "This chat runs in a Kiro cloud sandbox, so its files and Git can't be shown here.",
+      "cloudSandboxRefused": "Couldn't open this chat's files: it runs in a Kiro cloud sandbox, which only its own agent can reach.",
       "copyEdits": "Copy my edits"
     },
     "verifyHint": "Checks that the Coder CLI on this machine is signed in, that each profile's template exists, and which git hosts this machine is signed in to. Nothing is started and no credential is read.",
@@ -9775,6 +9777,22 @@
     "stopOnShutdownHint": "On: {{productName}} stops your workspaces when it shuts down. Off: they keep running, so chats reconnect faster after a restart. Coder's own auto-stop still applies.",
     "computeSurvivesStop": "Workspace keeps its files when stopped",
     "computeSurvivesStopHint": "On: {{productName}} stops the workspace when it is not needed. Off: it keeps running, because stopping would lose files.",
+    "kiroCloud": {
+      "replayed": "Couldn't reopen the cloud session, so a new sandbox started with this conversation carried over. Files and changes from the earlier sandbox aren't in it. The earlier session is still listed in Kiro Web (app.kiro.dev).",
+      "title": "Kiro Cloud Sessions",
+      "profilesHint": "Profiles that run the whole session in a Kiro cloud sandbox: the agent, its files and its commands. Choose one for a session from the environment menu beside the message box.",
+      "notVerified": "These profiles aren't checked ahead of time. If a cloud chat can't start, the chat explains why.",
+      "setup1": "In Settings → {{tab}}, choose the {{backend}} backend and sign in to Kiro with an account that has Kiro Cloud Sessions.",
+      "setup2": "List the repositories the sandbox should open, as owner/name. An empty list opens an empty workspace.",
+      "repositories": "Repositories",
+      "repositoriesHint": "Comma-separated, as owner/name (e.g. acme/web), at most {{max}}. Leave it empty for an empty workspace.",
+      "emptyWorkspace": "Empty workspace",
+      "profiles": "Kiro Cloud profiles",
+      "limits": "The cloud agent runs commands without asking you first, and can't use the tools and connections you set up in {{productName}}.",
+      "setup": "Kiro Cloud setup instructions",
+      "add": "Add Kiro Cloud profile",
+      "remove": "Remove Kiro Cloud profile"
+    },
     "checkCoderLogin": "To sign in, run <code>coder login</code> in a terminal on this machine."
   },
   "crewEditorNext": {

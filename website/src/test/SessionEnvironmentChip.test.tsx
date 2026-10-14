@@ -187,6 +187,18 @@ describe('SessionEnvironmentChip', () => {
     expect(put).not.toHaveBeenCalled()
   })
 
+  it('names a Kiro Cloud profile by its repositories, or the sandbox when it has none', async () => {
+    const cloud = { id: 'cloud', name: 'Kiro Cloud', provider: 'kiro_cloud', workdir: '', repositories: ['acme/web', 'acme/api'] }
+    const empty = { ...cloud, id: 'blank', name: 'Empty sandbox', repositories: [] }
+    vi.spyOn(api, 'chatSlotEnvironment').mockResolvedValue(envResponse(null, [DEV, cloud, empty]))
+    const u = userEvent.setup()
+    wrap(<SessionEnvironmentChip slot="chat-1" />)
+    await u.click(await screen.findByRole('button', { name: 'Runs on This machine' }))
+    expect(await screen.findByRole('menuitemradio', { name: /Kiro Cloud/ })).toHaveTextContent('acme/web, acme/api')
+    // No repositories and no directory: the row says the workspace starts empty.
+    expect(screen.getByRole('menuitemradio', { name: /Empty sandbox/ })).toHaveTextContent('Empty workspace')
+  })
+
   it('reports a failed switch and keeps the last confirmed environment', async () => {
     mockEnv(envResponse(null))
     vi.spyOn(api, 'setChatSlotEnvironment').mockRejectedValue(new Error('choices unreadable'))

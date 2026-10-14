@@ -69,7 +69,7 @@ export default function SessionEnvironmentChip({ slot, disabled, compact }: Prop
     mutationFn: (profile: string | null) => api.setChatSlotEnvironment(slot, profile),
     onSuccess: (result) => {
       queryClient.setQueryData<SlotEnvironment>(key, (old) =>
-        old ? { ...old, profile: result.profile } : old,
+        old ? { ...old, profile: result.profile, provider: result.profile ? old.profiles.find(p => p.id === result.profile)?.provider : null } : old,
       )
     },
     onError: (error: unknown) => {
@@ -185,8 +185,11 @@ export default function SessionEnvironmentChip({ slot, disabled, compact }: Prop
                 <ProviderGlyph provider={p.provider} size={14} />
                 <span className="flex flex-col min-w-0 flex-1">
                   <span className="truncate">{p.name}</span>
-                  {/* Profiles often share a folder; the template tells them apart. */}
-                  <span className="truncate text-[12px] text-muted font-mono">{p.template || p.workdir}</span>
+                  {/* Profiles often share a folder; the template tells them apart. A Kiro
+                      Cloud profile has no directory Kiro Crew can see. */}
+                  <span className="truncate text-[12px] text-muted font-mono">
+                    {p.template || p.workdir || p.repositories?.join(', ') || t('sessionEnvironments.kiroCloud.emptyWorkspace')}
+                  </span>
                 </span>
                 {mark(p.id)}
               </DropdownMenuRadioItem>

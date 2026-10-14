@@ -197,6 +197,10 @@ class AcpProvider(LLMProvider):
             kwargs["agent"] = agent
         self.member_context = member_context
         self.memory_mode = memory_mode
+        # The app that owns this session, set by session allocation from the chat
+        # slot's own app (never from transcript metadata). The cloud start passes
+        # it to governance so an app-bound profile applies.
+        self.owning_app = ""
         # Kept on the provider, not only on the placeholder client: on the kiro
         # path ``_start_kiro_runtime_impl`` replaces that client with an
         # ``AcpRuntime`` it constructs itself, and a dedicated subagent's
@@ -883,6 +887,12 @@ class AcpProvider(LLMProvider):
         if not self._client:
             return None
         return self._client.background_launch()
+
+    @property
+    def turn_survives_disconnect(self) -> bool:
+        return (
+            isinstance(self._client, AcpSessionProvider) and self._client.turn_survives_disconnect
+        )
 
     def has_unfinished_turn(self) -> bool:
         """True if the client reports a native turn that has NOT reached its
