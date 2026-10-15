@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { Provider } from 'react-redux'
@@ -66,6 +66,14 @@ describe('SessionEnvironmentChip', () => {
     chip()
     expect(await screen.findByRole('alert')).toHaveTextContent(error.message)
     expect(screen.queryByRole('button', { name: /Ask the agent/ })).toBeNull()
+  })
+
+  it('falls back to the settings load error, not the metrics one, when the read failure has no message', async () => {
+    vi.spyOn(api, 'chatSlotEnvironment').mockRejectedValue(new Error(''))
+    wrap(<SessionEnvironmentChip slot="chat-1" />)
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Could not load environment settings.')
+    expect(alert).not.toHaveTextContent("Could not read the workspace's metrics.")
   })
 
   it('surfaces a failed refresh even when an old environment is cached', async () => {
@@ -177,14 +185,77 @@ describe('SessionEnvironmentChip', () => {
     const el = await screen.findByTestId('composer-environment-chip')
     expect(el).toHaveTextContent('Coder MicroVM')
     expect(el).toHaveAccessibleName('Runs on Coder MicroVM. Fixed for this chat.')
-    expect(el.tagName).toBe('SPAN')
     // Muted with a lock, so it does not read as the picker.
     expect(el.querySelector('.lucide-lock')).not.toBeNull()
     expect(el).toHaveClass('text-muted')
-    expect(screen.queryByRole('button', { name: /Coder MicroVM/ })).toBeNull()
+    // It opens the metrics card, never the picker.
+    vi.spyOn(api, 'chatSlotEnvironmentHealth').mockResolvedValue({ state: 'stopped', workspace: 'w' })
     await u.click(el)
     expect(screen.queryByRole('menuitemradio')).toBeNull()
     expect(put).not.toHaveBeenCalled()
+  })
+
+  it('keeps a fixed LOCAL chip a plain muted status with no card', async () => {
+    mockEnv({ ...envResponse(null), locked: true })
+    const health = vi.spyOn(api, 'chatSlotEnvironmentHealth')
+    chip()
+    const el = await screen.findByTestId('composer-environment-chip')
+    expect(el.tagName).toBe('SPAN')
+    expect(el.querySelector('.lucide-lock')).not.toBeNull()
+    expect(el).toHaveClass('text-muted')
+    expect(screen.queryByRole('button', { name: /This machine/ })).toBeNull()
+    expect(health).not.toHaveBeenCalled()
+  })
+
+  it('shows the remote environment metrics when hovering the fixed chip', async () => {
+    vi.spyOn(api, 'chatSlotEnvironment').mockResolvedValue({ ...envResponse('dev'), locked: true })
+    const health = vi.spyOn(api, 'chatSlotEnvironmentHealth').mockResolvedValue({
+      state: 'running',
+      workspace: 'crewenv-devuser-abc',
+      workdir: '/workspace/crew-session',
+      stats: {
+        arch: 'aarch64', cpus: 2, load: [0.1, 0.2, 0.3],
+        memory: { total_bytes: 4_000_000_000, available_bytes: 3_000_000_000 },
+        disk: { total_bytes: 20_000_000_000, free_bytes: 15_000_000_000 },
+        uptime_s: 3700,
+      },
+    })
+    const u = userEvent.setup()
+    wrap(<SessionEnvironmentChip slot="chat-1" />)
+    await u.hover(await screen.findByTestId('composer-environment-chip'))
+    const card = await screen.findByTestId('environment-health-card')
+    expect(health).toHaveBeenCalledWith('chat-1')
+    // The environment read mounts the chip; hover opens the card, which starts
+    // its own health query. Wait for that response before reading the metrics.
+    await waitFor(() => expect(card).toHaveTextContent('Running'), { timeout: 5000 })
+    expect(card).toHaveTextContent('crewenv-devuser-abc')
+    expect(card).toHaveTextContent('aarch64')
+    expect(screen.getAllByRole('progressbar', { name: 'Memory' })[0]).toHaveAttribute('aria-valuenow', '25')
+  })
+
+  it('surfaces an unavailable health response through an error notice', async () => {
+    vi.spyOn(api, 'chatSlotEnvironment').mockResolvedValue({ ...envResponse('dev'), locked: true })
+    vi.spyOn(api, 'chatSlotEnvironmentHealth').mockResolvedValue({ state: 'unavailable', error: 'guest did not answer' })
+    const u = userEvent.setup()
+    wrap(<SessionEnvironmentChip slot="chat-1" />)
+    await u.click(await screen.findByTestId('composer-environment-chip'))
+    // Opening the health card starts its own query after the environment read.
+    const failure = await screen.findByRole('alert', {}, { timeout: 5000 })
+    // Plain-language lead; the raw guest reason is kept, below it, for the hand-off.
+    expect(failure).toHaveTextContent("The workspace isn't responding.")
+    expect(failure).toHaveTextContent('guest did not answer')
+    expect(within(failure).getByRole('button', { name: /Ask the agent/ })).toBeVisible()
+  })
+
+  it('tells the owner when a not-yet-created environment will be created', async () => {
+    vi.spyOn(api, 'chatSlotEnvironment').mockResolvedValue({ ...envResponse('dev'), locked: true })
+    vi.spyOn(api, 'chatSlotEnvironmentHealth').mockResolvedValue({ state: 'not_created' })
+    const u = userEvent.setup()
+    wrap(<SessionEnvironmentChip slot="chat-1" />)
+    await u.hover(await screen.findByTestId('composer-environment-chip'))
+    const card = await screen.findByTestId('environment-health-card')
+    await waitFor(() => expect(card).toHaveTextContent('Not created yet'), { timeout: 5000 })
+    expect(card).toHaveTextContent('The workspace is created with your next message.')
   })
 
   it('reports a failed switch and keeps the last confirmed environment', async () => {

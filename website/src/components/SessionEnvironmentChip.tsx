@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import EnvironmentHealthCard from './EnvironmentHealthCard'
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover'
 import { useTranslation } from 'react-i18next'
 import { Check, Cloud, Laptop, Loader2, Lock } from 'lucide-react'
 import { CoderIcon } from './BrandIcon'
@@ -22,6 +24,52 @@ import {
 
 /** Radix radio values are strings; this one stands for "no profile". */
 const LOCAL_VALUE = '__local__'
+
+/** Hover-to-open delays: long enough that crossing the shelf does not flash
+ *  the card, short enough to feel like a tooltip. */
+const HOVER_OPEN_MS = 250
+const HOVER_CLOSE_MS = 200
+
+function LockedRemoteChip({ slot, name, title, children }: {
+  slot: string; name: string; title: string; children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(false)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const later = (next: boolean, ms: number) => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => setOpen(next), ms)
+  }
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid="composer-environment-chip"
+          title={title}
+          aria-label={title}
+          aria-haspopup="dialog"
+          onMouseEnter={() => later(true, HOVER_OPEN_MS)}
+          onMouseLeave={() => later(false, HOVER_CLOSE_MS)}
+          className="inline-flex items-center gap-1.5 h-7 min-w-0 text-[12px] px-2.5 rounded-md bg-transparent hover:bg-[color-mix(in_srgb,var(--bg-elevated)_84%,var(--text))] transition-colors border-none cursor-pointer text-muted"
+        >
+          {children}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-auto"
+        onMouseEnter={() => later(true, 0)}
+        onMouseLeave={() => later(false, HOVER_CLOSE_MS)}
+        onOpenAutoFocus={(e: Event) => e.preventDefault()}
+      >
+        <EnvironmentHealthCard slot={slot} name={name} />
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 
 interface Props {
   slot: string
@@ -128,7 +176,7 @@ export default function SessionEnvironmentChip({ slot, disabled, compact }: Prop
   )
   const announce = <span className="sr-only" role="status" aria-live="polite">{stageLabel}</span>
 
-  if (locked) {
+  if (locked && !remote) {
     // A muted status with a lock, so it does not read as the picker.
     return (
       <div className="flex items-center min-w-0 shrink-0 pr-2 border-r border-border">
@@ -141,6 +189,20 @@ export default function SessionEnvironmentChip({ slot, disabled, compact }: Prop
           {content}
           <Lock size={11} className="shrink-0 opacity-70" aria-hidden />
         </span>
+        {announce}
+      </div>
+    )
+  }
+  if (locked) {
+    // A fixed REMOTE environment: muted with a lock like the local status, so it
+    // does not read as the picker; hover (or focus and click) shows its live
+    // state and machine metrics.
+    return (
+      <div className="flex items-center min-w-0 shrink-0 pr-2 border-r border-border">
+        <LockedRemoteChip slot={slot} name={name} title={title}>
+          {content}
+          <Lock size={11} className="shrink-0 opacity-70" aria-hidden />
+        </LockedRemoteChip>
         {announce}
       </div>
     )

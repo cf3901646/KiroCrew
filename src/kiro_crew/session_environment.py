@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,6 +52,8 @@ def clear_start_stage(session_key: str | None) -> None:
 
 
 # -- live remote workspaces, for the per-message context (set at runtime start) --
+# _REMOTE_WORKSPACES_MAX is the one cap for every per-session map below
+# (workspace, health reader, memory reading, refresh attempt).
 _REMOTE_WORKSPACES_MAX = 512
 _remote_workspaces: dict[str, tuple[str, str]] = {}
 
@@ -60,11 +65,137 @@ def remember_remote_workspace(session_key: str | None, name: str, workdir: str) 
     if session_key not in _remote_workspaces and len(_remote_workspaces) >= _REMOTE_WORKSPACES_MAX:
         _remote_workspaces.pop(next(iter(_remote_workspaces)))
     _remote_workspaces[session_key] = (name, workdir)
+    # Runtimes start on the gateway loop; the context build that refreshes this
+    # session's workspace memory runs on a worker thread and schedules onto it.
+    global _refresh_loop
+    try:
+        _refresh_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        pass
 
 
 def forget_remote_workspace(session_key: str | None) -> None:
     if session_key:
         _remote_workspaces.pop(session_key, None)
+        _remote_memory.pop(session_key, None)
+        _health_readers.pop(session_key, None)
+        _refresh_attempted.pop(session_key, None)
+
+
+# -- the remote workspace's own memory ------------------------------------------------
+#
+# The [RESOURCES] line measures the gateway. For a remote session the machine
+# that runs its builds is the workspace, so the line also reports that machine's
+# memory, from the last health reading (``session_browse.session_health``).
+# In-memory, bounded, and refreshed in the background at most once a minute per
+# session, so building a turn's context never waits on a remote round trip.
+REMOTE_MEMORY_MAX_AGE_SECS = 60.0
+#: session key -> (available bytes, total bytes, monotonic time read)
+_remote_memory: dict[str, tuple[int, int, float]] = {}
+_remote_memory_refreshing: set[str] = set()
+#: session key -> monotonic time the last background read was started.
+_refresh_attempted: dict[str, float] = {}
+_refresh_lock = threading.Lock()
+#: The loop background reads run on, recorded by remember_remote_workspace.
+_refresh_loop: asyncio.AbstractEventLoop | None = None
+#: Strong references to in-flight reads, so none is collected mid-run.
+_refresh_tasks: set[asyncio.Task[None]] = set()
+#: session key -> its provider's health read, registered when the provider
+#: prepares the session. A session with none registered is never read.
+_health_readers: dict[str, Callable[[str], Awaitable[object]]] = {}
+
+
+def register_remote_health(
+    session_key: str | None, reader: Callable[[str], Awaitable[object]]
+) -> None:
+    """Name the read that measures ``session_key``'s workspace for the [RESOURCES] line."""
+    if not session_key:
+        return
+    if session_key not in _health_readers and len(_health_readers) >= _REMOTE_WORKSPACES_MAX:
+        _health_readers.pop(next(iter(_health_readers)))
+    _health_readers[session_key] = reader
+
+
+def remember_remote_memory(session_key: str | None, available: int, total: int) -> None:
+    """Cache one reading of ``session_key``'s remote workspace memory, in bytes."""
+    if not session_key or available < 0 or total <= 0:
+        return
+    if session_key not in _remote_memory and len(_remote_memory) >= _REMOTE_WORKSPACES_MAX:
+        _remote_memory.pop(next(iter(_remote_memory)))
+    _remote_memory[session_key] = (int(available), int(total), time.monotonic())
+
+
+def remote_memory_for(session_key: str | None) -> tuple[int, int, float] | None:
+    """``(available bytes, total bytes, age seconds)`` of the last reading, or None."""
+    entry = _remote_memory.get(session_key or "")
+    if entry is None:
+        return None
+    return entry[0], entry[1], time.monotonic() - entry[2]
+
+
+def refresh_remote_memory_soon(session_key: str | None) -> None:
+    """Start a background health read when the cached reading is missing or stale.
+
+    Callable from any thread: the context build runs on a worker thread
+    (``run_in_embed_pool``), so the read is scheduled onto the gateway loop the
+    session's runtime started on. No-op without such a loop, without a health
+    read the session's provider registered, or while a read is already in
+    flight for this session. Never wakes stopped compute:
+    ``session_health`` reports a stopped workspace without measuring it, and
+    then nothing is cached.
+    """
+    if not session_key:
+        return
+    reader = _health_readers.get(session_key)
+    if reader is None:
+        return
+    cached = remote_memory_for(session_key)
+    if cached is not None and cached[2] < REMOTE_MEMORY_MAX_AGE_SECS:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        bound = _refresh_loop
+        if bound is None or bound.is_closed() or not bound.is_running():
+            return
+        loop = bound
+    with _refresh_lock:
+        if session_key in _remote_memory_refreshing:
+            return
+        # One attempt a minute, whatever it found: a stopped, unreachable or
+        # unmeasured workspace caches no reading, and must not cost a remote
+        # round trip on every turn.
+        now = time.monotonic()
+        last = _refresh_attempted.get(session_key)
+        if last is not None and now - last < REMOTE_MEMORY_MAX_AGE_SECS:
+            return
+        if (
+            session_key not in _refresh_attempted
+            and len(_refresh_attempted) >= _REMOTE_WORKSPACES_MAX
+        ):
+            _refresh_attempted.pop(next(iter(_refresh_attempted)))
+        _refresh_attempted[session_key] = now
+        _remote_memory_refreshing.add(session_key)
+
+    async def refresh() -> None:
+        try:
+            await asyncio.wait_for(reader(session_key), 30)
+        except Exception:  # noqa: BLE001 -- a missing reading just omits the clause
+            pass
+        finally:
+            with _refresh_lock:
+                _remote_memory_refreshing.discard(session_key)
+
+    def start() -> None:
+        task = loop.create_task(refresh())
+        _refresh_tasks.add(task)
+        task.add_done_callback(_refresh_tasks.discard)
+
+    try:
+        loop.call_soon_threadsafe(start)
+    except RuntimeError:  # the loop closed after the check
+        with _refresh_lock:
+            _remote_memory_refreshing.discard(session_key)
 
 
 #: Sessions just given a new, empty workspace; the next context says so once.
