@@ -1131,9 +1131,9 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
             {view === 'grid' && !filtersActive && scopeFolderId && (
               <FolderBreadcrumbBar folders={folders} currentFolderId={scopeFolderId} onNavigate={openFolder} />
             )}
+            {/* Folder rename announcement — always mounted so the live region is present for any view. */}
+            <span className="sr-only" role="status" aria-live="polite" aria-atomic="true" data-testid="folder-rename-status">{folderRenameAnnouncement}</span>
             {view === 'grid' && (subfolders.length > 0 || (creatingFolder && !filtersActive)) && (
-              <>
-              <span className="sr-only" role="status" aria-live="polite" aria-atomic="true" data-testid="folder-rename-status">{folderRenameAnnouncement}</span>
               <FolderCardGrid>
                 {creatingFolder && !filtersActive && (
                   <div className="mb-3 rounded-lg border border-accent bg-card p-3" style={newFolderColor ? { borderLeft: `3px solid ${newFolderColor}` } : undefined}>
@@ -1165,7 +1165,6 @@ export default function ArtifactsPage() {  const navigate = useNavigate()
                   />
                 ))}
               </FolderCardGrid>
-              </>
             )}
             {(view !== 'grid' || filtersActive) && creatingFolder && (
               <div className="mb-2 max-w-[360px]">

@@ -608,13 +608,15 @@ function ChatSidebar({
   const {
     revealFlash,
   } = useSidebarReveal({ sidebarRootRef, dispatch, localSlots, revealBlockingFilters, staleCollapseMs, sortKey, isStaleExempt, slotFolders, setStaleExpanded, expandFolderAncestors, expandConductorAncestors: expandRevealAncestors, folders, setSlotFilter, setFilterHiddenFolders, setRevealForcedVisible, setFlatView })
-  const renameCommit = useCallback((id: string, name: string) => {
+  const renameCommit = useCallback((id: string, name: string): boolean => {
     // Re-checked here, not only where the editor opens: the gateway can drop
     // while an editor is open. Keep the editor and its draft, and say why,
     // instead of firing a PATCH whose rollback would discard the typed name.
+    // Returns false when the commit is refused (editor stays open); callers
+    // skip the focus-restore rAF so keyboard focus stays in the input.
     if (!connected) {
       setFolderOfflineNotice(i18nT('utils.offline.gateway_offline_reconnect', { action: i18nT('utils.offline.rename_folders') }))
-      return
+      return false
     }
     const trimmed = name.trim()
     if (trimmed) {
@@ -624,6 +626,7 @@ function ChatSidebar({
       })
     }
     setEditingId(null)
+    return true
   }, [updateFolderMutation, setEditingId, connected, setFolderOfflineNotice, setFolderRenameAnnouncement])
   const {
     dragMove, undoDragMove, undoBar, folderMove, undoFolderMove, folderUndoBar, moveByDrag, moveFolderByDrag,
@@ -796,6 +799,9 @@ function ChatSidebar({
   const board = createBoardLane({ ...scope, ...laneRows, ...folderBlocks })
 
   return (
+    // stable theming hook 'sidebar' — see website/docs/theming-contract.md
+    // The region is the session picker a guide's "choose the session" step
+    // points at (`sessions.list`): both layouts draw their rows inside it.
     <>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true" data-testid="slot-rename-status">{renameAnnouncement}</span>
       <span className="sr-only" role="status" aria-live="polite" aria-atomic="true" data-testid="folder-rename-status">{folderRenameAnnouncement}</span>

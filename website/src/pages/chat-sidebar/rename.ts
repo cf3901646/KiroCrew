@@ -57,6 +57,10 @@ export function useSessionRename({ dispatch, store, queryClient }: {
   // cannot list it as a dependency without remounting on every keystroke.
   const renamingSlotRef = useRef<string | null>(null)
   useEffect(() => { renamingSlotRef.current = renamingSlot }, [renamingSlot])
+  // Mirror of renameScope for stable rAF closures — the scope must outlive the
+  // setRenamingSlot(null) call so the focus query targets the right lane instance.
+  const renameScopeRef = useRef<string | null>(null)
+  useEffect(() => { renameScopeRef.current = renameScope }, [renameScope])
   // The rename field is a wrapping, auto-growing <textarea> (not a single-line
   // <input>) so a long session title is fully visible while editing instead of
   // being clipped at the right edge — you can see and edit words that a
@@ -92,11 +96,15 @@ export function useSessionRename({ dispatch, store, queryClient }: {
     // setRenamingSlot(null). Querying before the re-render risks a stale
     // DOM node if the component tree remounts (e.g., animated list mocks).
     const key = renamingSlotRef.current
+    const scope = renameScopeRef.current
     setRenamingSlot(null)
     requestAnimationFrame(() => {
       if (!key) return
-      ;(document.querySelector(`[data-session-row="${key}"]`) as HTMLElement | null)
-        ?.focus({ preventScroll: true })
+      ;(document.querySelector(
+        scope
+          ? `[data-session-row="${CSS.escape(key)}"][data-session-scope="${CSS.escape(scope)}"]`
+          : `[data-session-row="${CSS.escape(key)}"]`,
+      ) as HTMLElement | null)?.focus({ preventScroll: true })
     })
   }, [])
   const onRenameCommit = useCallback((key: string, value: string) => {
@@ -168,9 +176,13 @@ export function useSessionRename({ dispatch, store, queryClient }: {
     // triggered by setRenamingSlot(null), so the query finds the live element.
     // Pointer blur does NOT restore focus (WCAG 3.2.2).
     if (viaEnter) {
+      const scope = renameScopeRef.current
       requestAnimationFrame(() => {
-        ;(document.querySelector(`[data-session-row="${key}"]`) as HTMLElement | null)
-          ?.focus({ preventScroll: true })
+        ;(document.querySelector(
+          scope
+            ? `[data-session-row="${CSS.escape(key)}"][data-session-scope="${CSS.escape(scope)}"]`
+            : `[data-session-row="${CSS.escape(key)}"]`,
+        ) as HTMLElement | null)?.focus({ preventScroll: true })
       })
     }
   }, [dispatch, queryClient, store])
