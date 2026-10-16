@@ -255,19 +255,19 @@ slot checks still apply. The dashboard's hosts (`AppHost` and the builtin
 pages) pass one that signals only for slots the app owns -- the slots an app
 token receives slot events for with no `slots:*` declaration. A slot the app
 does not own, such as one the generic `POST /api/chat` created, is not signalled
-and the embed keeps polling it. An app needs no new permission for this.
+and the embed keeps polling it at the full pace: `connected(slotKey)` is
+`false` for such a slot even while the socket is up. An app needs no new
+permission for this.
 
 ```ts
 interface SlotPush {
-  connected(): boolean
+  connected(slotKey: string): boolean
   watch(slotKey: string, watcher: {
     onChange(): void
     onConnection(connected: boolean): void
   }): () => void
 }
 ```
-
-`useSlotPush()` returns the provider's `SlotPush`, or `null`.
 
 #### Polling and outages
 

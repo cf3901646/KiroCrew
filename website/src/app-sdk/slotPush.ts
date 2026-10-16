@@ -23,16 +23,19 @@ export interface SlotPushWatcher {
   /** The slot may have new rows: re-read it. */
   onChange(): void
   /**
-   * The channel went up or down. `true` is sent again on every reconnect, even
-   * when the previous call also said `true`: a change made while the channel
-   * was down was never signalled, so a watcher re-reads on each `true`.
+   * The channel went up or down for this slot (see `SlotPush.connected`).
+   * `true` is sent again on every reconnect, even when the previous call also
+   * said `true`: a change made while the channel was down was never signalled,
+   * so a watcher re-reads on each `true`.
    */
   onConnection(connected: boolean): void
 }
 
 export interface SlotPush {
-  /** Whether the channel is up right now. */
-  connected(): boolean
+  /** Whether this slot's changes are being signalled right now: the channel
+   *  is up AND the host signals for this slot. A slot the host does not signal
+   *  for reads `false`, so its embed keeps the full poll cadence. */
+  connected(slotKey: string): boolean
   /** Watch one slot until the returned function is called. */
   watch(slotKey: string, watcher: SlotPushWatcher): () => void
 }

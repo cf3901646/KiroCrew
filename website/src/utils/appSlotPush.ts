@@ -32,7 +32,13 @@ const SLOT_CHANGE_FRAMES: ReadonlySet<string> = new Set([
   'queue_push', 'queue_cancel', 'queue_edit', 'queue_pop', 'queue_reorder',
   'steer_push', 'slot_clear',
   'approval', 'approval_resolved', 'question_card',
+  // Changes the title of the read, which the embed header shows.
+  'slot_title',
 ])
+
+/** Frames that name their slot in `key` rather than `slot`, as the gateway's
+ *  gate reads them (`ws_event_scope.ws_event_allowed`). */
+const KEY_SLOT_FRAMES: ReadonlySet<string> = new Set(['slot_title'])
 
 interface Entry { app: string; watcher: SlotPushWatcher }
 
@@ -50,7 +56,8 @@ let ownerOf: OwnerOf = storeOwnerOf
 /** Signal the watchers of the frame's slot, if the frame changes it. */
 export function noteAppSlotFrame(type: string, data: unknown): void {
   if (!SLOT_CHANGE_FRAMES.has(type) || typeof data !== 'object' || data == null) return
-  const slot = (data as { slot?: unknown }).slot
+  const fields = data as { slot?: unknown; key?: unknown }
+  const slot = fields.slot == null && KEY_SLOT_FRAMES.has(type) ? fields.key : fields.slot
   if (typeof slot !== 'string' || !slot) return
   const set = watchers.get(slot)
   if (!set || set.size === 0) return
@@ -64,15 +71,22 @@ export function noteAppSlotFrame(type: string, data: unknown): void {
 /** The socket went up (every successful connect, reconnects included) or down. */
 export function setAppSlotPushConnected(value: boolean): void {
   connected = value
-  for (const set of [...watchers.values()]) {
-    for (const e of [...set]) e.watcher.onConnection(value)
+  for (const [slotKey, set] of [...watchers.entries()]) {
+    for (const e of [...set]) e.watcher.onConnection(liveFor(e.app, slotKey))
   }
+}
+
+/** The channel is live for one app's watch on one slot only while the socket
+ *  is up AND the slot is that app's: a slot it does not own is never signalled,
+ *  so its embed must keep the full poll cadence instead of the backstop. */
+function liveFor(app: string, slotKey: string): boolean {
+  return connected && ownerOf(slotKey) === app
 }
 
 /** The `SlotPush` one app receives. */
 export function createAppSlotPush(app: string): SlotPush {
   return {
-    connected: () => connected,
+    connected: (slotKey) => liveFor(app, slotKey),
     watch(slotKey, watcher) {
       const entry: Entry = { app, watcher }
       let set = watchers.get(slotKey)

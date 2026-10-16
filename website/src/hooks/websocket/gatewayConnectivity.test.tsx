@@ -46,13 +46,13 @@ describe('gatewayConnectivity helpers', () => {
   })
 
   it('moves app embeds\' push channel with the same flag', () => {
-    resetAppSlotPushForTests()
+    resetAppSlotPushForTests(() => 'spec-builder')
     const push = createAppSlotPush('spec-builder')
     const dispatch = vi.fn()
     markGatewayConnected(dispatch as never)
-    expect(push.connected()).toBe(true)
+    expect(push.connected('s1')).toBe(true)
     markGatewayDisconnected(dispatch as never)
-    expect(push.connected()).toBe(false)
+    expect(push.connected('s1')).toBe(false)
     resetAppSlotPushForTests()
   })
 })

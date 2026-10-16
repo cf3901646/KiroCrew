@@ -28,24 +28,37 @@ from kiro_crew.dashboard.ws_event_scope import (
 _clear_module_caches = ws_event_scoping_helpers._clear_module_caches
 _clear_ws_scope_module_caches = ws_event_scoping_helpers._clear_ws_scope_module_caches
 
-_PUSH_SOURCE = (
-    Path(__file__).resolve().parents[1] / "website" / "src" / "utils" / "appSlotPush.ts"
-)
+_PUSH_SOURCE = Path(__file__).resolve().parents[1] / "website" / "src" / "utils" / "appSlotPush.ts"
+
+
+def _set_literal(name: str) -> list[str]:
+    source = _PUSH_SOURCE.read_text(encoding="utf-8")
+    match = re.search(rf"const {name}[^=]*= new Set\(\[(.*?)\]\)", source, re.DOTALL)
+    assert match, f"{name} literal not found in appSlotPush.ts"
+    names = re.findall(r"'([^']+)'", match.group(1))
+    assert names, f"{name} is empty"
+    return names
 
 
 def _push_frames() -> list[str]:
-    source = _PUSH_SOURCE.read_text(encoding="utf-8")
-    match = re.search(r"const SLOT_CHANGE_FRAMES[^=]*= new Set\(\[(.*?)\]\)", source, re.S)
-    assert match, "SLOT_CHANGE_FRAMES literal not found in appSlotPush.ts"
-    names = re.findall(r"'([^']+)'", match.group(1))
-    assert names, "SLOT_CHANGE_FRAMES is empty"
-    return names
+    return _set_literal("SLOT_CHANGE_FRAMES")
+
+
+def _key_frames() -> list[str]:
+    return _set_literal("KEY_SLOT_FRAMES")
 
 
 def test_every_push_frame_is_slot_scoped_and_not_subagent():
     frames = _push_frames()
     assert sorted(set(frames) - _SLOT_SCOPED_EVENTS) == []
     assert sorted(set(frames) & _SUBAGENT_EVENTS) == []
+
+
+def test_title_frame_is_signalled_and_read_from_key():
+    # The embed header shows the slot read's title, so a rename must signal.
+    assert "slot_title" in _push_frames()
+    assert _key_frames() == ["slot_title"]
+    assert set(_key_frames()) <= set(_push_frames())
 
 
 @pytest.mark.parametrize("event_type", _push_frames())
@@ -55,10 +68,12 @@ def test_gateway_admits_push_frame_for_own_slot_only(event_type):
     person = _make_slot(owner_app="", origin=SlotOrigin.USER, key="person")
     state = _make_state({"own": own, "foreign": foreign, "person": person})
     no_scope = _allowed()
+    # The same field the client reads the slot from for this frame.
+    field = "key" if event_type in _key_frames() else "slot"
 
     def allowed(slot_key: str) -> bool:
         return ws_event_allowed(
-            event_type, {"slot": slot_key}, app="spec-builder", allowed_events=no_scope, state=state
+            event_type, {field: slot_key}, app="spec-builder", allowed_events=no_scope, state=state
         )
 
     assert allowed("own") is True

@@ -378,9 +378,12 @@ function ChatEmbed({
   // stall notice so both measure the same outage.
   const failureRunsRef = useRef<FailureRuns>(new Map())
   const queryClient = useQueryClient()
-  // The host's push channel (slotPush.ts), and whether it is up now.
+  // The host's push channel (slotPush.ts). The poll cadence asks it at each
+  // tick whether it signals THIS slot now, so a slot that changes hands, or is
+  // listed only after mount, is judged by its owner at that moment. The state
+  // only re-renders on a connection change, so the cadence moves at once then.
   const slotPush = useSlotPush()
-  const [pushLive, setPushLive] = useState(() => slotPush?.connected() ?? false)
+  const [, setPushLive] = useState(() => slotPush?.connected(slotKey) ?? false)
   const { data: slotData, refetch, isPlaceholderData, isError, isFetching, status, dataUpdatedAt, errorUpdatedAt } = useQuery({
     queryKey: ['app-sdk-embed', slotKey, limit],
     // Incremental: the held page's cursor is echoed, and only the rows after
@@ -402,7 +405,7 @@ function ChatEmbed({
     refetchInterval: (query) => embedPollInterval(
       query.state,
       embedOutageMs(failureRunsRef.current, `${String(query.queryKey[1])}:${String(query.queryKey[2])}`, query.state),
-      pushLive,
+      slotPush?.connected(slotKey) ?? false,
     ),
   })
 
@@ -416,7 +419,7 @@ function ChatEmbed({
   refetchRef.current = refetch
   useEffect(() => {
     if (!slotPush) { setPushLive(false); return }
-    setPushLive(slotPush.connected())
+    setPushLive(slotPush.connected(slotKey))
     let disposed = false
     let inFlight = false
     let dirty = false

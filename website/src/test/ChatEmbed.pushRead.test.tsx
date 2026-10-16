@@ -46,9 +46,12 @@ const IDLE_PAGE = { messages: [{ role: 'user', content: 'hi', ts: 1 }], running:
 /** A host channel the test drives by hand. */
 function fakePush(initiallyUp: boolean) {
   let up = initiallyUp
+  // Whether the host signals this embed's slot at all (the dashboard: the slot
+  // is owned by the watching app). The socket can be up while this is false.
+  let signalled = true
   const watchers = new Map<SlotPushWatcher, string>()
   const push: SlotPush = {
-    connected: () => up,
+    connected: () => up && signalled,
     watch(slotKey, watcher) {
       watchers.set(watcher, slotKey)
       return () => { watchers.delete(watcher) }
@@ -58,7 +61,8 @@ function fakePush(initiallyUp: boolean) {
     push,
     watched: () => [...watchers.values()],
     signal: () => { for (const w of [...watchers.keys()]) w.onChange() },
-    setUp: (v: boolean) => { up = v; for (const w of [...watchers.keys()]) w.onConnection(v) },
+    setUp: (v: boolean) => { up = v; for (const w of [...watchers.keys()]) w.onConnection(v && signalled) },
+    setSignalled: (v: boolean) => { signalled = v },
   }
 }
 
@@ -176,6 +180,48 @@ describe('ChatEmbed push reads', () => {
     act(() => { host.setUp(true) })
     await advance(EMBED_PUSH_MIN_GAP_MS + 50)
     expect(mockGet.mock.calls.length).toBe(before + 1)
+  })
+
+  it('keeps the normal cadence for a slot the host does not signal, though the socket is up', async () => {
+    mockGet.mockResolvedValue(IDLE_PAGE)
+    const host = fakePush(true)
+    host.setSignalled(false)
+    await mount(host.push)
+    await advance(5100)
+    expect(mockGet).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns to the normal cadence when the slot stops being signalled mid-life', async () => {
+    mockGet.mockResolvedValue(IDLE_PAGE)
+    const host = fakePush(true)
+    await mount(host.push)
+    // One backstop read, judged while the slot was still signalled...
+    await advance(EMBED_PUSH_BACKSTOP_IDLE_MS + 100)
+    expect(mockGet).toHaveBeenCalledTimes(2)
+    // ...then it changes hands with the socket still up: the next tick is 5s.
+    host.setSignalled(false)
+    await advance(EMBED_PUSH_BACKSTOP_IDLE_MS + 100)
+    const after = mockGet.mock.calls.length
+    await advance(5100)
+    expect(mockGet.mock.calls.length).toBe(after + 1)
+  })
+
+  it('moves to the backstop once a slot listed after mount becomes signalled', async () => {
+    mockGet.mockResolvedValue(IDLE_PAGE)
+    const host = fakePush(true)
+    // The socket is up, but the slot is not yet the app's at mount.
+    host.setSignalled(false)
+    await mount(host.push)
+    await advance(5100)
+    expect(mockGet).toHaveBeenCalledTimes(2)
+    // The slot list now carries it, with no reconnect: the next tick is 15s.
+    host.setSignalled(true)
+    await advance(5100)
+    const after = mockGet.mock.calls.length
+    await advance(5100)
+    expect(mockGet.mock.calls.length).toBe(after)
+    await advance(EMBED_PUSH_BACKSTOP_IDLE_MS)
+    expect(mockGet.mock.calls.length).toBe(after + 1)
   })
 
   it('polls at the normal cadence with no host channel', async () => {

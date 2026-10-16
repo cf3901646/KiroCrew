@@ -343,7 +343,7 @@ Tests: `website/src/test/useStopPress.test.ts`, `website/src/test/ChatEmbed.stop
 `ChatEmbed` re-reads its slot when the host signals a change instead of waiting
 for its next poll. The seam is the optional `slotPush` on the SDK context
 (`app-sdk/slotPush.ts`): `watch(slotKey, {onChange, onConnection})` plus
-`connected()`. The signal is content-free: no rows, no text, no slot metadata.
+`connected(slotKey)`. The signal is content-free: no rows, no text, no slot metadata.
 Every row the embed renders still comes from its scoped since-cursor read
 (`embedIncrementalRead`, history.md), so the app's declared `permissions.api`
 and the gateway's slot-ownership check on `GET /api/chat/slots/{slot}` keep
@@ -358,28 +358,41 @@ the dashboard socket decodes and the connectivity flag from
 user's and carries every slot, so the provider is the permission boundary. It
 signals an app only for a slot whose `ChatSlot.app` is that app, read again at
 each delivery, and only for frames that change what the slot read returns
-(`SLOT_CHANGE_FRAMES`). That is the set §13 admits to an app token with no
+(`SLOT_CHANGE_FRAMES`), `slot_title` included because the embed header shows
+the read's `title`. `slot_title` names its slot in `key`, not `slot`, and the
+provider reads it from there (`KEY_SLOT_FRAMES`) exactly as the gateway gate
+does. That is the set §13 admits to an app token with no
 `slots:*` declaration, so this path grants no event an app token could not
 already receive. Widening it to `slots:user`/`slots:all` slots would mean
 mirroring the gate on the client, `exposeToApps` included; that is not done.
-A slot the app does not own (the generic `POST /api/chat` creates one) is not
-signalled and its embed polls as before. `test/test_app_slot_push_frames.py`
+A slot the app does not own (the generic `POST /api/chat` creates one), or one
+not yet in the slot list, is not signalled, and `connected(slotKey)` and
+`onConnection` report it as not live even while the socket is up, so its embed
+keeps the full 1 s / 5 s cadence rather than the backstop. The embed reads
+`connected(slotKey)` again at each poll tick, so a slot that changes hands,
+or one that enters the slot list after the embed mounted, moves cadence on the
+next tick with no reconnect. `test/test_app_slot_push_frames.py`
 pins that each frame in the set is slot-scoped, outside the subagent family,
 and admitted by the gateway for an own slot only.
 
 Reads: a signal reads at once. Signals during an in-flight read collapse into
 one trailing read, at least 250 ms after the previous one, and the read joins
 an in-flight request rather than aborting it (`cancelRefetch: false`), so a
-fast stream cannot cancel every read. Each `onConnection(true)`, reconnects
+fast stream cannot cancel every read. The cost: while a reply streams, one
+embed reads its slot up to four times a second where the poll alone reads once;
+each is the since-cursor delta, so it carries only the rows after the held
+cursor. Idle, the backstop reads once per 15 s where the poll alone reads once per 5 s.
+The 250 ms gap is the price of showing a reply as it is written. Each `onConnection(true)`, reconnects
 included, reads once, because a change made while the socket was down was
-never signalled. While the channel is up and the read is healthy the poll is a
+never signalled. While the channel is live for this slot and the read is healthy the poll is a
 backstop (5 s running, 15 s idle). A failing read ignores the channel and keeps
 the no-push cadence (1 s / 5 s, then the outage-length back-off), so the
 stalled notice still appears 10 s into an outage: the channel being up says
 nothing about whether the read works (a deleted session, lost access).
 
-Hosts that pass it: `AppHost`, `SpecBuilderPage`, `IncidentChat`. Others
-(session controls, the vendored iframe SDK) pass none and poll.
+Hosts that pass it: `AppHost`, `SpecBuilderPage`. Others (`IncidentChat`,
+whose slot is unowned; session controls; the vendored iframe SDK) pass none
+and poll.
 Writers: `website/src/app-sdk/slotPush.ts`, `website/src/app-sdk/ChatEmbed.tsx`,
 `website/src/utils/appSlotPush.ts`, `website/src/hooks/useWebSocket.ts`,
 `website/src/hooks/websocket/gatewayConnectivity.ts`.
