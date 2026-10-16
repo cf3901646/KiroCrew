@@ -28,6 +28,7 @@ import ChatEmbed from '../../app-sdk/ChatEmbed'
 
 import { i18nT } from '../../i18n/t'
 import { withBase } from '../../lib/basePath'
+import { useAppSlotPush } from '../../utils/appSlotPush'
 /**
  * The panel's fixed box height and the composer's auto-grow cap, together.
  *
@@ -71,6 +72,9 @@ export default function IncidentChat({
   const navigateFn = useCallback((path: string) => {
     window.location.assign(withBase(path))
   }, [])
+  // Signalled only while the incident slot is owned by this app; otherwise the
+  // embed keeps polling (appSlotPush.ts).
+  const slotPush = useAppSlotPush('ops-mission-control')
 
   return (
     // Fixed-height flex column, and `min-h-0` on the growing child.
@@ -98,6 +102,7 @@ export default function IncidentChat({
           allowedApiPaths={ALLOWED_API}
           allowedEvents={ALLOWED_EVENTS}
           navigateFn={navigateFn}
+          slotPush={slotPush}
         >
           <ChatEmbed
             slotKey={incidentSlotKey(incidentId)}
