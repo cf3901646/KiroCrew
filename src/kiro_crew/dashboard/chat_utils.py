@@ -613,6 +613,8 @@ if TYPE_CHECKING:  # every owner-defined name in _EXPORTS, for type checkers and
         _display_clean_old,
         _display_clean_seen,
         _display_clean_young,
+        _display_key_tail,
+        _display_key_tail_memo,
         _display_redaction_cache,
         _display_redaction_cache_bytes,
         _display_redaction_cache_info,
