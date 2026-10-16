@@ -152,10 +152,20 @@ paste side table, `storeSentPastes`), and the optimistic row carries the same
 blocks so it draws the chip. Recovery hands the blocks back with the text
 (`restorePastes` on the parked receipt), carried through
 `useComposerPastes().carry` so a block whose number the composer already uses
-is renumbered. `ChatEmbed.longPaste.test.tsx` covers collapse, the wire shape,
-the optimistic row, the refused-send hand-back, atomic delete and the setting;
-the import-graph test pins `pasteEditor.ts`, `composerPastes.ts` and both layers
-as store-free.
+is renumbered. Undo/redo is the main composer's own snapshot history,
+`chat-core/composer/undoHistory.ts` (`useUndoHistory`, which `ChatInput` also
+mounts): each snapshot carries the blocks, so Cmd/Ctrl+Z after a chip is
+deleted restores its content with its token, and the send never carries a
+token without its block. Every user change to the draft (typing, a chip
+delete or expand, a picker insert) goes through `setDraftFromUser`, which
+marks it as the user's own, so the history records even the first edit after
+a slot switch instead of reseeding at it as if the parent had restored that
+slot's draft. `ChatEmbed.longPaste.test.tsx` covers collapse, the
+wire shape, the optimistic row, the refused-send hand-back, atomic delete,
+undo after a delete (also as the first edit after a slot switch) and the
+setting; the import-graph test pins
+`pasteEditor.ts`, `undoHistory.ts`, `composerPastes.ts` and both layers as
+store-free.
 
 The host owns session attribution. Chat hosts bind their session; routed app
 pages bind the established `dashboard:ui` page identity. A provided host key
