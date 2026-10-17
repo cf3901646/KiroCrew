@@ -12423,6 +12423,22 @@
         "outcome_discarded": "Descartada. La página activa no cambió.",
         "outcome_closed": "Vista previa terminada. Esta es la página activa ahora.",
         "outcome_undo": "Para deshacerlo, pídele a {{name}} que restaure el panel anterior."
+      },
+      "browserInstallCard": {
+        "region_label": "Compatibilidad con el navegador",
+        "checking": "Comprobando la compatibilidad con el navegador…",
+        "status_unavailable": "No se pudo comprobar la compatibilidad con el navegador en este equipo.",
+        "retry": "Reintentar",
+        "open_settings": "Abrir la configuración del navegador",
+        "needed_title": "La compatibilidad con el navegador requiere una instalación única",
+        "needed_body": "{{productName}} descarga las herramientas de navegador que usa para abrir páginas por ti. Puede tardar unos minutos.",
+        "install": "Instalar compatibilidad con el navegador",
+        "installing": "Instalando la compatibilidad con el navegador",
+        "installed": "La compatibilidad con el navegador está instalada",
+        "continue": "Continuar con mi solicitud",
+        "continue_prompt": "La compatibilidad con el navegador está instalada. Continúa con mi solicitud anterior.",
+        "continue_prefilled": "Añadido a tu cuadro de mensaje. Envíalo para continuar.",
+        "failed": "No se pudo instalar la compatibilidad con el navegador"
       }
     },
     "chatPage": {

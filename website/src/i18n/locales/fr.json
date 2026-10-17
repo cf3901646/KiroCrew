@@ -12423,6 +12423,22 @@
         "outcome_discarded": "Supprimé. La page en ligne n’a pas changé.",
         "outcome_closed": "Aperçu terminé. C’est maintenant la page en ligne.",
         "outcome_undo": "Pour annuler, demande à {{name}} de remettre le tableau de bord précédent."
+      },
+      "browserInstallCard": {
+        "region_label": "Prise en charge du navigateur",
+        "checking": "Vérification de la prise en charge du navigateur…",
+        "status_unavailable": "Impossible de vérifier la prise en charge du navigateur sur cet ordinateur.",
+        "retry": "Réessayer",
+        "open_settings": "Ouvrir les paramètres du navigateur",
+        "needed_title": "La prise en charge du navigateur nécessite une installation unique",
+        "needed_body": "{{productName}} télécharge les outils de navigateur qu'il utilise pour ouvrir des pages pour vous. Cela peut prendre quelques minutes.",
+        "install": "Installer la prise en charge du navigateur",
+        "installing": "Installation de la prise en charge du navigateur",
+        "installed": "La prise en charge du navigateur est installée",
+        "continue": "Poursuivre ma demande",
+        "continue_prompt": "La prise en charge du navigateur est installée. Poursuis ma demande précédente.",
+        "continue_prefilled": "Ajouté à votre zone de message. Envoyez-le pour continuer.",
+        "failed": "Impossible d'installer la prise en charge du navigateur"
       }
     },
     "chatPage": {

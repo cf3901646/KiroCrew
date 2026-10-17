@@ -376,6 +376,13 @@ def test_no_panel_and_no_cli_gives_install_guidance(
     assert "Settings -> Browser" in out
 
 
+def test_install_guidance_names_the_marker_the_dashboard_renders() -> None:
+    # The dashboard matches this exact comment (detectBrowserInstallMarker.ts);
+    # a drifted spelling would leave the agent emitting a marker nothing renders.
+    assert mod.BROWSER_INSTALL_MARKER == "<!-- kirocrew:browser-install -->"
+    assert mod.BROWSER_INSTALL_MARKER in mod._NOT_SET_UP_TEXT
+
+
 def test_unresolved_session_without_cli_gives_install_guidance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

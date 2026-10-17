@@ -16,8 +16,14 @@ bus, runs the operation in the panel it owns, and posts the result. A missing
 panel fails fast to the CLI fallback. The native path needs no `playwright-cli`,
 so a fresh desktop install browses with nothing installed; CLI presence is
 checked only when an op falls back, and a fallback with no CLI returns guidance
-the agent relays to the user, naming the one-click install in
-**Settings → Browser** rather than assuming they know it exists. The agent still
+the agent relays to the user rather than assuming they know a settings page
+exists. In a dashboard chat that guidance has the agent emit the hidden
+`<!-- kirocrew:browser-install -->` marker, which renders an in-chat install
+card under the reply: it calls the same owner-gated `POST /api/browser/install`
+as **Settings → Browser**, polls the shared install job while it runs, and on
+success pre-fills a "continue my request" message for the user to send. On a
+messaging channel the guidance names **Settings → Browser** instead, because
+the marker would reach the reader as literal text. The agent still
 decides per task whether a browser is warranted or whether `web_fetch` answers
 the question.
 

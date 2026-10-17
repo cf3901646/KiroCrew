@@ -6816,6 +6816,22 @@
         "outcome_discarded": "Discarded. The live page didn’t change.",
         "outcome_closed": "Preview ended. This is the live page now.",
         "outcome_undo": "To undo, ask {{name}} to restore the previous dashboard."
+      },
+      "browserInstallCard": {
+        "region_label": "Browser support",
+        "checking": "Checking browser support…",
+        "status_unavailable": "Couldn't check browser support on this computer.",
+        "retry": "Try again",
+        "open_settings": "Open Browser settings",
+        "needed_title": "Browser support needs a one-time install",
+        "needed_body": "{{productName}} downloads the browser tools it uses to open pages for you. This can take a few minutes.",
+        "install": "Install browser support",
+        "installing": "Installing browser support",
+        "installed": "Browser support is installed",
+        "continue": "Continue my request",
+        "continue_prompt": "Browser support is installed. Please continue with my earlier request.",
+        "continue_prefilled": "Added to your message box. Send it to continue.",
+        "failed": "Browser support couldn't be installed"
       }
     },
     "chatPage": {

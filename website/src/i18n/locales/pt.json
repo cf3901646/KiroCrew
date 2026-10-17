@@ -12423,6 +12423,22 @@
         "outcome_discarded": "Descartada. A página no ar não mudou.",
         "outcome_closed": "Prévia encerrada. Esta é a página no ar agora.",
         "outcome_undo": "Para desfazer, peça para {{name}} restaurar o painel anterior."
+      },
+      "browserInstallCard": {
+        "region_label": "Suporte ao navegador",
+        "checking": "Verificando o suporte ao navegador…",
+        "status_unavailable": "Não foi possível verificar o suporte ao navegador neste computador.",
+        "retry": "Tentar novamente",
+        "open_settings": "Abrir configurações do navegador",
+        "needed_title": "O suporte ao navegador precisa de uma instalação única",
+        "needed_body": "O {{productName}} baixa as ferramentas de navegador que usa para abrir páginas para você. Isso pode levar alguns minutos.",
+        "install": "Instalar suporte ao navegador",
+        "installing": "Instalando o suporte ao navegador",
+        "installed": "O suporte ao navegador está instalado",
+        "continue": "Continuar minha solicitação",
+        "continue_prompt": "O suporte ao navegador está instalado. Continue minha solicitação anterior.",
+        "continue_prefilled": "Adicionado à sua caixa de mensagem. Envie para continuar.",
+        "failed": "Não foi possível instalar o suporte ao navegador"
       }
     },
     "chatPage": {

@@ -96,6 +96,11 @@ _DISABLED_TEXT = (
     "`playwright-cli open <url>`, `snapshot`, `click <ref>`, `screenshot`."
 )
 
+# Hidden HTML comment the dashboard renders as the in-chat install card
+# (website/src/utils/detectBrowserInstallMarker.ts). Showing the card installs
+# nothing: its button calls the same owner-gated POST /api/browser/install.
+BROWSER_INSTALL_MARKER = "<!-- kirocrew:browser-install -->"
+
 # Returned only when the op needs the playwright-cli fallback AND the CLI is
 # absent. The native panel needs no CLI, so this never fires for a desktop
 # session whose panel is serving. Worded for relay: a customer who asked to open
@@ -104,10 +109,14 @@ _DISABLED_TEXT = (
 _NOT_SET_UP_TEXT = (
     "Error: browsing is not set up on this host -- this session has no built-in "
     "browser panel to use, and the playwright-cli fallback is not installed. "
-    "Tell the user plainly that browser support needs a one-time install and "
-    "that Settings -> Browser (/settings/browser) has an Install button; do not "
-    "assume they know that page exists. Offer to continue their request once it "
-    "is installed. For a page that only needs reading, use web_fetch meanwhile."
+    "Tell the user plainly that browser support needs a one-time install; do not "
+    "assume they know a settings page exists. In a dashboard chat, put "
+    f"`{BROWSER_INSTALL_MARKER}` on its own line in your reply: it renders an "
+    "Install browser support button under the reply that runs the install and "
+    "then offers to continue their request. On Slack, Discord or another channel "
+    "the marker shows as literal text, so instead name Settings -> Browser in the "
+    "dashboard, which has the same Install button. For a page that only needs "
+    "reading, use web_fetch meanwhile."
 )
 
 # Per-op ceilings (ms) forwarded to the bus. A page load or an explicit
