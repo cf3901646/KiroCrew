@@ -1,22 +1,17 @@
 import { memo, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Link, useInRouterContext } from 'react-router-dom'
 import { AlertTriangle, CheckCircle2, Globe, Loader2 } from 'lucide-react'
 
-import {
-  api,
-  browserInstallConflictJob,
-  type BrowserInstallData,
-  type BrowserInstallJob,
-} from '../../api/client'
+import { ApiError } from '../../api/apiError'
+import { api, browserInstallConflictJob, type BrowserInstallData } from '../../api/client'
+import ErrorNotice from '../../components/ErrorNotice'
 import { i18nT } from '../../i18n/t'
 import { useLanguageGeneration } from '../../i18n/useLanguageGeneration'
 import { hasBrowserInstallMarker } from '../../utils/detectBrowserInstallMarker'
 import { STAGE_KEY } from '../settings/BrowserInstallStatus'
-import type { PendingRequest } from '../settings/browserInstallState'
+import { INSTALL_KEY, type PendingRequest, withConflictJob } from '../settings/browserInstallState'
 import { browserInstallCardState } from './browserInstallCardState'
-
-/** Shared with Settings -> Browser, so both read (and poll) one status. */
-const INSTALL_KEY = ['browserInstall'] as const
 
 /** Re-read cadence while an install runs; at rest the card does not poll. */
 const RUNNING_POLL_MS = 2_000
@@ -41,11 +36,6 @@ const linkCls = [
 /** Put text in the composer for the reader to send; never sends it. */
 function prefillComposer(text: string) {
   window.dispatchEvent(new CustomEvent('mc:prefill-composer', { detail: { text } }))
-}
-
-function withConflictJob(job: BrowserInstallJob) {
-  return (old: BrowserInstallData | undefined): BrowserInstallData | undefined =>
-    old ? { ...old, install_job: job, installing: true } : old
 }
 
 /**
@@ -74,6 +64,7 @@ const BrowserInstallCard = memo(function BrowserInstallCard({ content }: {
 
 function BrowserInstallCardBody() {
   const qc = useQueryClient()
+  const inRouter = useInRouterContext()
   const [continued, setContinued] = useState(false)
 
   const installMut = useMutation({
@@ -90,6 +81,10 @@ function BrowserInstallCardBody() {
   const q = useQuery<BrowserInstallData>({
     queryKey: INSTALL_KEY,
     queryFn: api.getBrowserInstall,
+    // Stale at once (the global default is never stale), so mounting the card
+    // or returning to the window re-reads the status, as Settings -> Browser does.
+    staleTime: 0,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: true,
     refetchInterval: (query) => {
       const d = query.state.data
@@ -98,29 +93,50 @@ function BrowserInstallCardBody() {
     },
   })
 
-  const state = q.isError && !q.data
+  const statusReadError = q.isError && q.error instanceof Error && q.error.message
+    ? q.error.message
+    : null
+  const state = q.isError
     ? { kind: 'unavailable' as const }
     : browserInstallCardState(q.data, pending, installMut.submittedAt)
 
+  // The owner gate refused the POST. Retrying from this browser repeats the
+  // same 403, so the card stops offering Install and says who can. A 403 that
+  // only means this dashboard's sign-in lapsed (or a proxy's sign-in page) is
+  // not the owner gate: it keeps the retry, which works once re-authenticated.
+  const ownerOnly = installMut.error instanceof ApiError
+    && installMut.error.status === 403
+    && !installMut.error.authRequired
+    && !installMut.error.edgeChallenge
   // The POST itself was refused (a non-owner 403, a 500, a lost answer). A 409
   // naming the running job is not an error here: the card shows that job.
-  const requestError =
-    installMut.isError && !browserInstallConflictJob(installMut.error)
+  const requestError = ownerOnly
+    ? i18nT('pages.chat.browserInstallCard.owner_only')
+    : installMut.isError && !browserInstallConflictJob(installMut.error)
       ? installMut.error instanceof Error && installMut.error.message
         ? installMut.error.message
         : i18nT('pages.settings.browserPanel.install_request_failed')
       : null
 
   const install = () => { setContinued(false); installMut.mutate() }
-  const settingsLink = (
-    <a href={BROWSER_SETTINGS_ROUTE} className={linkCls} data-testid="browser-install-card-settings">
+  // An in-app route change, not a page load: the chat page's unmount flush
+  // keeps the composer draft, and the reader stays in the dashboard. Outside a
+  // Router (the capture harness, other hosts) a plain link is all there is.
+  const settingsLinkAs = (className: string) => inRouter ? (
+    <Link to={BROWSER_SETTINGS_ROUTE} className={className} data-testid="browser-install-card-settings">
+      {i18nT('pages.chat.browserInstallCard.open_settings')}
+    </Link>
+  ) : (
+    <a href={BROWSER_SETTINGS_ROUTE} className={className} data-testid="browser-install-card-settings">
       {i18nT('pages.chat.browserInstallCard.open_settings')}
     </a>
   )
+  const settingsLink = settingsLinkAs(linkCls)
 
   let icon = <Globe size={16} className="text-accent shrink-0 mt-[2px]" aria-hidden="true" />
   let title: string
   let body: string | null = null
+  let failureDetail: string | null = null
   let actions: ReactNode = null
 
   switch (state.kind) {
@@ -149,8 +165,10 @@ function BrowserInstallCardBody() {
     case 'installed':
       icon = <CheckCircle2 size={16} className="text-ok shrink-0 mt-[2px]" aria-hidden="true" />
       title = i18nT('pages.chat.browserInstallCard.installed')
+      // Once clicked, the confirmation REPLACES the button: a second click would
+      // only pre-fill the same message again.
       body = continued ? i18nT('pages.chat.browserInstallCard.continue_prefilled') : null
-      actions = (
+      actions = continued ? null : (
         <button
           type="button"
           className={btnPrimaryCls}
@@ -167,13 +185,19 @@ function BrowserInstallCardBody() {
     case 'failed':
       icon = <AlertTriangle size={16} className="text-danger shrink-0 mt-[2px]" aria-hidden="true" />
       title = i18nT('pages.chat.browserInstallCard.failed')
-      body = state.detail || i18nT('pages.settings.browserPanel.failure_no_detail')
+      // Plain-language next step first; the installer's raw output under it.
+      body = i18nT('pages.chat.browserInstallCard.failed_next_step')
+      failureDetail = state.detail || i18nT('pages.settings.browserPanel.failure_no_detail')
+      // Settings shows what is missing, so it leads; a blind retry usually fails
+      // the same way.
       actions = (
         <>
-          <button type="button" className={btnPrimaryCls} onClick={install} data-testid="browser-install-card-install">
-            {i18nT('pages.chat.browserInstallCard.retry')}
-          </button>
-          {settingsLink}
+          {settingsLinkAs(btnPrimaryCls)}
+          {!ownerOnly && (
+            <button type="button" className={btnCls} onClick={install} data-testid="browser-install-card-install">
+              {i18nT('pages.chat.browserInstallCard.retry')}
+            </button>
+          )}
         </>
       )
       break
@@ -182,9 +206,11 @@ function BrowserInstallCardBody() {
       body = i18nT('pages.chat.browserInstallCard.needed_body')
       actions = (
         <>
-          <button type="button" className={btnPrimaryCls} onClick={install} data-testid="browser-install-card-install">
-            {i18nT('pages.chat.browserInstallCard.install')}
-          </button>
+          {!ownerOnly && (
+            <button type="button" className={btnPrimaryCls} onClick={install} data-testid="browser-install-card-install">
+              {i18nT('pages.chat.browserInstallCard.install')}
+            </button>
+          )}
           {settingsLink}
         </>
       )
@@ -198,28 +224,46 @@ function BrowserInstallCardBody() {
       data-testid="browser-install-card"
       data-state={state.kind}
     >
-      {/* One live region: stage changes and the outcome are announced, the
-          buttons are not. */}
-      <div role="status" className="flex items-start gap-2">
-        {icon}
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium">{title}</div>
-          {body && (
-            <div
-              className={
-                state.kind === 'failed'
-                  ? 'text-[12px] text-muted font-mono whitespace-pre-wrap [overflow-wrap:anywhere]'
-                  : 'text-[13px] text-muted'
-              }
-            >
-              {body}
-            </div>
-          )}
+      {state.kind === 'unavailable' ? (
+        <div className="flex items-start gap-2">
+          {/* No hand-off: navigating away could discard an unsaved composer
+              draft; this card only writes through the append-only prefill event. */}
+          <ErrorNotice
+            variant="inline"
+            title={statusReadError ? title : undefined}
+            message={statusReadError || title}
+            testId="browser-install-card-status-error"
+          />
         </div>
-      </div>
+      ) : (
+        // One live region: stage changes and the outcome are announced, the
+        // buttons are not.
+        <div role="status" className="flex items-start gap-2">
+          {icon}
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium">{title}</div>
+            {body && <div className="text-[13px] text-muted">{body}</div>}
+          </div>
+        </div>
+      )}
+      {/* No hand-off: navigating away could discard an unsaved composer
+          draft; this card only writes through the append-only prefill event. */}
+      {failureDetail && (
+        <div className="pl-6">
+          <ErrorNotice
+            variant="inline"
+            showIcon={false}
+            message={failureDetail}
+            messageClassName="font-mono whitespace-pre-wrap break-words"
+            testId="browser-install-card-failure-detail"
+          />
+        </div>
+      )}
+      {/* No hand-off: navigating away could discard an unsaved composer
+          draft; this card only writes through the append-only prefill event. */}
       {requestError && (
-        <div className="text-[12px] text-danger pl-6" role="alert" data-testid="browser-install-card-error">
-          {requestError}
+        <div className="pl-6">
+          <ErrorNotice variant="inline" message={requestError} testId="browser-install-card-error" />
         </div>
       )}
       {actions && <div className="flex flex-wrap items-center gap-2 pl-6">{actions}</div>}

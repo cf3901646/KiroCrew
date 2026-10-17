@@ -15,12 +15,31 @@ await server.listen()
 const browser = await chromium.launch({ executablePath })
 try {
   for (const theme of ['dark', 'light']) {
-    for (const scene of ['needed', 'running', 'installed', 'failed']) {
+    // scene -> the card state it settles in. `refused` is a needed card whose
+    // Install click the gateway rejects; `installed-continued` is shot after the
+    // Continue click, `installed` before it.
+    const scenes = {
+      needed: 'needed',
+      running: 'running',
+      installed: 'installed',
+      'installed-continued': 'installed',
+      failed: 'failed',
+      refused: 'needed',
+      unavailable: 'unavailable',
+    }
+    for (const [scene, state] of Object.entries(scenes)) {
       const ctx = await browser.newContext({ viewport: { width: 860, height: 420 }, reducedMotion: 'reduce' })
       const page = await ctx.newPage()
       await page.goto(`http://127.0.0.1:5198/capture/browser-install-card.html?scene=${scene}&theme=${theme}`)
-      await page.waitForSelector(`[data-testid="browser-install-card"][data-state="${scene}"]`, { timeout: 60000 })
-      if (scene === 'installed') await page.click('[data-testid="browser-install-card-continue"]')
+      await page.waitForSelector(`[data-testid="browser-install-card"][data-state="${state}"]`, { timeout: 60000 })
+      if (scene === 'installed-continued') {
+        await page.click('[data-testid="browser-install-card-continue"]')
+        await page.waitForSelector('[data-testid="browser-install-card-continue"]', { state: 'detached' })
+      }
+      if (scene === 'refused') {
+        await page.click('[data-testid="browser-install-card-install"]')
+        await page.waitForSelector('[data-testid="browser-install-card-error"]')
+      }
       const file = path.join(outDir, `browser-install-card-${scene}-${theme}.png`)
       await page.locator('[data-testid="capture-reply"]').screenshot({ path: file })
       console.log(file)

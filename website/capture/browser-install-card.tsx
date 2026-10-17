@@ -3,12 +3,14 @@
  *
  * The card is the real component, rendered under a reply that carries the real
  * marker; only the gateway answers are fixtures, chosen by `?scene=`:
- * needed | running | installed | failed. `?theme=light` switches the theme.
+ * needed | running | installed | installed-continued | failed | refused |
+ * unavailable. `?theme=light` switches the theme.
  * Run `node capture/shoot-browser-install-card.mjs <outdir>` from website/.
  */
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
+import { ApiError } from '../src/api/apiError'
 import { api, type BrowserInstallData, type BrowserInstallJob } from '../src/api/client'
 import MarkdownRenderer from '../src/components/MarkdownRenderer'
 import { initI18n } from '../src/i18n/all'
@@ -35,15 +37,27 @@ const answers: Record<string, BrowserInstallData> = {
   installed: { ...base, installed: true, browser_ok: true, install_job: job({ status: 'succeeded', stage: 'finishing' }) },
   failed: { ...base, install_job: job({ status: 'failed', error_code: 'step_failed', error_detail: 'npm not found; install Node.js 20 or newer first' }) },
 }
+// `installed-continued` is the installed answer; the shooter clicks Continue.
+answers['installed-continued'] = answers.installed
 const answer = answers[scene] ?? base
+// The gateway's own owner-gate refusal (403 owner_only), for `refused`.
+const ownerOnly = () =>
+  new ApiError(403, 'owner authorization required', '{"error":"owner authorization required","code":"owner_only"}')
 Object.assign(api, {
-  getBrowserInstall: async () => answer,
-  installBrowserCli: async () => answer,
+  getBrowserInstall: async () => {
+    // `unavailable`: the status read itself fails.
+    if (scene === 'unavailable') throw new ApiError(502, 'Bad gateway', '')
+    return answer
+  },
+  installBrowserCli: async () => {
+    if (scene === 'refused') throw ownerOnly()
+    return answer
+  },
 })
 
 const REPLY = [
   "I couldn't open that page yet: browser support isn't installed on this computer.",
-  'It needs a one-time install. Click **Install browser support** below and I can pick up where we left off.',
+  'It needs a one-time install. Use the card below and I can pick up where we left off.',
   '',
   '<!-- kirocrew:browser-install -->',
 ].join('\n')

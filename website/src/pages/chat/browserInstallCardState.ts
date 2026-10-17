@@ -39,12 +39,14 @@ export function browserInstallCardState(
     }
     return { kind: 'running', stage: activity.source === 'pending' ? 'preparing' : null, elapsedS: null }
   }
+  // A failed CLI setup wins over filesystem detection because the CLI may be
+  // present while required host libraries are still missing.
+  const last = finishedJob(data)
+  if (last && last.kind === 'cli_setup' && (last.status === 'failed' || last.status === 'interrupted')) {
+    return { kind: 'failed', detail: last.error_detail }
+  }
   // `browser_ok` false means the CLI is present but its browser build is not, so
   // the next browse would still fail: keep offering the install until both are.
   if (data.installed && data.browser_ok !== false) return { kind: 'installed' }
-  const last = finishedJob(data)
-  if (last && last.kind === 'cli_setup' && last.status !== 'succeeded') {
-    return { kind: 'failed', detail: last.error_detail }
-  }
   return { kind: 'needed' }
 }
