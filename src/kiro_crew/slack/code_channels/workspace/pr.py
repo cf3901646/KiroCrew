@@ -147,3 +147,29 @@ async def find_pull_request(repo: RepoRef, branch: str) -> PrLookup:
         ci = status.get("ci") if status.get("ci") in CI_STATES else ""
         pr = PullRequest(pr.number, pr.url, str(state), str(ci or ""))
     return PrLookup("found", pr)
+
+
+async def pull_request_by_number(repo: RepoRef, number: int) -> PrLookup:
+    """PR *number* on *repo* with its state and CI, read like :func:`find_pull_request`.
+
+    For a worker that reported a PR number but no branch. The URL is built from
+    the channel's own repository, so a number can only ever name a PR there.
+    """
+    if not isinstance(number, int) or isinstance(number, bool) or number <= 0:
+        return PrLookup("unavailable", reason="number")
+    if repo.host not in _PUBLIC_GITHUB:
+        await _load_enterprise_hosts()
+    if not _github_host_allowed(repo.host):
+        return PrLookup("unavailable", reason="host")
+    from kiro_crew.dashboard.source_providers import chip_refresh
+
+    url = f"https://{repo.host}/{repo.owner}/{repo.name}/pull/{number}"
+    try:
+        status = await chip_refresh._fetch_check_status(url)
+    except Exception as exc:
+        logger.info("code channel PR read unavailable for %s: %s", url, exc)
+        return PrLookup("unavailable", reason="gh")
+    if not isinstance(status, dict) or status.get("state") not in PR_STATES:
+        return PrLookup("unavailable", reason="state")
+    ci = status.get("ci") if status.get("ci") in CI_STATES else ""
+    return PrLookup("found", PullRequest(number, url, str(status["state"]), str(ci or "")))

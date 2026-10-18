@@ -278,6 +278,15 @@ exactly as with the switch off, and the page says why under the switch.
   asks you to confirm.
 - **Code channels** (`slack.code_channels`) lets the agent open a Slack code channel for
   coding work: one channel per task, with a context bar, a diff tab and channel commands.
+  When the channel's agent is a conductor that hands pieces of the work to worker
+  sessions, the channel also gets a pinned **work board**, kept up to date in place: the
+  goal, the round, how many pieces are done, and one row per worker with its state
+  (working, idle, waiting on you, blocked, done, lost), its last report, its branch,
+  its pull request and tests, and an **Open in dashboard** link. A worker that needs
+  you gets a threaded reply that mentions you. The diff tab shows the channel's
+  changes and then each worker's commits under its own heading, the context bar lists
+  each worker's pull request, and the wrap-up lists what became of each worker. In the
+  dashboard the workers sit under the conductor, in the channel's folder.
   It adds the `code_channels:manage`, `chat:write.customize`, `canvases:write`,
   `channels:write.invites` and `groups:write.invites` scopes. Your workspace must have
   Slack code channels enabled.
