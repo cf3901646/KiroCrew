@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import dataclasses
 import errno
 import json
 import os
@@ -299,14 +298,12 @@ def _run_config_cmd(args: argparse.Namespace) -> None:
                         file=sys.stderr,
                     )
                     sys.exit(1)
+            # Both destinations take the same key check, BEFORE the split: the
+            # overlay outranks config.json, so a key nothing reads written there
+            # looks like a pinned setting and silently does nothing
+            # (kirodotdev/KiroCrew#9909: `config set --local memory.enabled false`).
+            _refuse_unknown_key(key, parsed)
             if use_local:
-                top_key = key.split(".")[0]
-                _known_sections = {f.name for f in dataclasses.fields(KiroCrewConfig)}
-                if top_key not in _known_sections:
-                    print(
-                        f"⚠️  Warning: '{top_key}' is not a recognized config section",
-                        file=sys.stderr,
-                    )
                 p = config_local_path()
 
                 # NOTE: unlike the automatic/background config writers (which now
@@ -341,21 +338,6 @@ def _run_config_cmd(args: argparse.Namespace) -> None:
                 )
                 print(f"✅ {key} = {json.dumps(parsed)} (saved to config.local.json)")
             else:
-                # Validate the key exists before taking the lock. A declared
-                # leaf counts as existing even when it is not stored yet, but
-                # then its value is type-checked here: this is its first write,
-                # so no stored value stands in for the declaration.
-                cfg = KiroCrewConfig.load()
-                d = cfg.to_dict()
-                if not _dict_set(d, key, parsed):
-                    declared = _declared_entry(key)
-                    if declared is None:
-                        print(f"❌ Unknown key: {key}", file=sys.stderr)
-                        sys.exit(1)
-                    type_error = _declared_type_error(declared, parsed)
-                    if type_error:
-                        print(f"❌ {key}: {type_error}", file=sys.stderr)
-                        sys.exit(1)
 
                 def _mutate_base(existing: dict) -> dict:
                     # Apply the set on the freshly-locked raw data.
@@ -713,6 +695,26 @@ def _dict_set(d: dict, key: str, value: object) -> bool:
         return False
     cur[parts[-1]] = value
     return True
+
+
+def _refuse_unknown_key(key: str, parsed: object) -> None:
+    """Exit with ``Unknown key`` unless *key* is one the loaded config can hold.
+
+    Validated before any lock is taken. A declared leaf counts as existing even
+    when it is not stored yet, but then its value is type-checked here: this is
+    its first write, so no stored value stands in for the declaration.
+    """
+    d = KiroCrewConfig.load().to_dict()
+    if _dict_set(d, key, parsed):
+        return
+    declared = _declared_entry(key)
+    if declared is None:
+        print(f"❌ Unknown key: {key}", file=sys.stderr)
+        sys.exit(1)
+    type_error = _declared_type_error(declared, parsed)
+    if type_error:
+        print(f"❌ {key}: {type_error}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _dict_set_create(d: dict, key: str, value: object) -> None:

@@ -1100,10 +1100,17 @@ kirocrew config set --local agent.log_level debug
 kirocrew config set agent.log_level debug
 ```
 
-`config set --local` does not validate the dotted key: it warns when the top-level
-section is unknown and writes any leaf into `config.local.json`, which outranks
-`config.json`. Only the plain `config set` answers `Unknown key`. The enum, beacon
-and tailnet gates run before that split, so they apply to both.
+Both forms check the dotted key the same way (`_refuse_unknown_key`): a key the
+loaded config does not hold and the schema does not declare exits 1 with
+`Unknown key` before anything is written. The check matters most for `--local`:
+`config.local.json` outranks `config.json`, so a key nothing reads stored there
+(`memory.enabled`) would look pinned while doing nothing. A key plain
+`config set` refuses is refused on `--local` too, such as a field of a map member
+not stored yet (`agents.<name>.model`) or a key the schema spells by its field
+name (`slack.dm_activation`). Setting the parent object with `--local` works,
+because `config.local.json` is deep-merged over `config.json`
+(`config set --local slack '{"dm_activation":"mention"}'`). The enum, beacon and
+tailnet gates also run before the local/base split, so they apply to both.
 
 A list-typed key (`agent.apps_trusted`, `slack.allowed_users`, ...) takes a JSON array
 (`kirocrew config set agent.apps_trusted '["a","b"]'`); anything else is refused with nothing

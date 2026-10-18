@@ -339,7 +339,7 @@ class TestCliConfigSetLocal:
         config_dir.mkdir()
 
         args = argparse.Namespace(
-            config_action="set", key="agent.yolo", value="true", file=None, local=True
+            config_action="set", key="agent.streaming", value="false", file=None, local=True
         )
 
         with patch(
@@ -351,28 +351,143 @@ class TestCliConfigSetLocal:
         local_file = config_dir / "config.local.json"
         assert local_file.exists()
         data = json.loads(local_file.read_text(encoding="utf-8"))
-        assert data["agent"]["yolo"] is True
+        assert data["agent"]["streaming"] is False
 
-    def test_local_set_unknown_section_warns(self, tmp_path: Path, capsys) -> None:
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "bogus.key",  # unknown section
+            "memory.enabled",  # unknown leaf in a known section
+        ],
+    )
+    def test_local_set_unknown_key_refused(self, tmp_path: Path, capsys, key: str) -> None:
+        """An unknown key is refused on the overlay path too, with nothing written.
+
+        The overlay outranks config.json, so a key nothing reads stored there looks
+        like a pinned setting while doing nothing. An overlay already on disk is
+        left byte-for-byte as it was.
+        """
         import argparse
 
         from kiro_crew.cli_config import _config_cmd
 
         config_dir = tmp_path / ".kirocrew"
         config_dir.mkdir()
+        local_file = config_dir / "config.local.json"
+        before = '{"agent": {"streaming": false}}'
+        local_file.write_text(before, encoding="utf-8")
 
         args = argparse.Namespace(
-            config_action="set", key="bogus.key", value="hello", file=None, local=True
+            config_action="set", key=key, value="false", file=None, local=True
         )
 
-        with patch(
-            "kiro_crew.cli_config.config_local_path", return_value=config_dir / "config.local.json"
+        with patch("kiro_crew.cli_config.config_local_path", return_value=local_file):
+            with patch("kiro_crew.cli_config.sel"):
+                with pytest.raises(SystemExit) as exc:
+                    _config_cmd(args)
+
+        assert exc.value.code == 1
+        assert f"Unknown key: {key}" in capsys.readouterr().err
+        assert local_file.read_text(encoding="utf-8") == before
+
+    @pytest.mark.parametrize(
+        "key",
+        [
+            "agent.role_models.subagent",
+            "agent.role_models.subagnet",
+            "agents.newname.model",
+            "slack.dm_activation",
+            "telegram.accounts.b1.bot_token",
+            "agent.apps_trusted.foo",
+            "registries.foo.name",
+        ],
+    )
+    def test_local_set_refuses_what_plain_set_refuses(
+        self, tmp_path: Path, capsys, key: str
+    ) -> None:
+        """``--local`` accepts exactly the keys plain ``config set`` accepts."""
+        import argparse
+
+        from kiro_crew.cli_config import _config_cmd
+
+        config_dir = tmp_path / ".kirocrew"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text("{}", encoding="utf-8")
+        local_file = config_dir / "config.local.json"
+
+        args = argparse.Namespace(config_action="set", key=key, value="x", file=None, local=True)
+
+        with (
+            patch("kiro_crew.config.loader.config_dir", return_value=config_dir),
+            patch("kiro_crew.cli_config.config_local_path", return_value=local_file),
+            patch("kiro_crew.cli_config.sel"),
         ):
+            with pytest.raises(SystemExit) as exc:
+                _config_cmd(args)
+
+        assert exc.value.code == 1
+        assert f"Unknown key: {key}" in capsys.readouterr().err
+        assert not local_file.exists()
+
+    def test_local_set_parent_object_deep_merges(self, tmp_path: Path) -> None:
+        """Setting the parent object on ``--local`` merges over the base section."""
+        import argparse
+
+        from kiro_crew.cli_config import _config_cmd
+
+        config_dir = tmp_path / ".kirocrew"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(
+            json.dumps({"slack": {"observe_max_messages": 7}}), encoding="utf-8"
+        )
+        local_file = config_dir / "config.local.json"
+
+        args = argparse.Namespace(
+            config_action="set",
+            key="slack",
+            value='{"dm_activation":"mention"}',
+            file=None,
+            local=True,
+        )
+
+        with (
+            patch("kiro_crew.config.loader.config_dir", return_value=config_dir),
+            patch("kiro_crew.cli_config.config_local_path", return_value=local_file),
+            patch("kiro_crew.cli_config.sel"),
+        ):
+            _config_cmd(args)
+
+        assert json.loads(local_file.read_text(encoding="utf-8")) == {
+            "slack": {"dm_activation": "mention"}
+        }
+        with patch("kiro_crew.config.loader.config_dir", return_value=config_dir):
+            cfg = KiroCrewConfig.load()
+        assert cfg.slack_dm_activation == "mention"
+        assert cfg.observe_max_messages == 7
+
+    def test_local_set_real_memory_toggle_still_written(self, tmp_path: Path) -> None:
+        """A real memory toggle (``memory.inject_lessons``) still pins via --local."""
+        import argparse
+
+        from kiro_crew.cli_config import _config_cmd
+
+        key = "memory.inject_lessons"
+
+        config_dir = tmp_path / ".kirocrew"
+        config_dir.mkdir()
+        local_file = config_dir / "config.local.json"
+
+        args = argparse.Namespace(
+            config_action="set", key=key, value="false", file=None, local=True
+        )
+
+        with patch("kiro_crew.cli_config.config_local_path", return_value=local_file):
             with patch("kiro_crew.cli_config.sel"):
                 _config_cmd(args)
 
-        captured = capsys.readouterr()
-        assert "not a recognized config section" in captured.err
+        assert json.loads(local_file.read_text(encoding="utf-8")) == {
+            "memory": {"inject_lessons": False}
+        }
 
     def test_nonlocal_set_subtracts_overlay(self, tmp_path: Path) -> None:
         import argparse
@@ -421,7 +536,7 @@ class TestCliConfigSetLocal:
         (config_dir / "config.local.json").write_text("not json {{{")
 
         args = argparse.Namespace(
-            config_action="set", key="agent.yolo", value="true", file=None, local=True
+            config_action="set", key="agent.streaming", value="false", file=None, local=True
         )
 
         with patch(
@@ -431,7 +546,7 @@ class TestCliConfigSetLocal:
                 _config_cmd(args)
 
         data = json.loads((config_dir / "config.local.json").read_text(encoding="utf-8"))
-        assert data["agent"]["yolo"] is True
+        assert data["agent"]["streaming"] is False
 
     def test_local_set_handles_non_dict_existing_file(self, tmp_path: Path) -> None:
         import argparse
@@ -443,7 +558,7 @@ class TestCliConfigSetLocal:
         (config_dir / "config.local.json").write_text('"just a string"')
 
         args = argparse.Namespace(
-            config_action="set", key="agent.yolo", value="true", file=None, local=True
+            config_action="set", key="agent.streaming", value="false", file=None, local=True
         )
 
         with patch(
@@ -453,7 +568,42 @@ class TestCliConfigSetLocal:
                 _config_cmd(args)
 
         data = json.loads((config_dir / "config.local.json").read_text(encoding="utf-8"))
-        assert data["agent"]["yolo"] is True
+        assert data["agent"]["streaming"] is False
+
+    def test_local_set_with_corrupt_base_writes_overlay_only(self, tmp_path: Path) -> None:
+        """A malformed config.json does not block `config set --local` or get rewritten.
+
+        The key check loads the config, which reads this same malformed base and
+        falls back to defaults, so a declared key is still accepted and only the
+        overlay is written.
+        """
+        import argparse
+
+        from kiro_crew.cli_config import _config_cmd
+
+        config_dir = tmp_path / ".kirocrew"
+        config_dir.mkdir()
+        corrupt = b"broken {{{"
+        (config_dir / "config.json").write_bytes(corrupt)
+
+        args = argparse.Namespace(
+            config_action="set", key="agent.streaming", value="false", file=None, local=True
+        )
+
+        with (
+            patch("kiro_crew.cli_config.config_path", return_value=config_dir / "config.json"),
+            patch(
+                "kiro_crew.cli_config.config_local_path",
+                return_value=config_dir / "config.local.json",
+            ),
+            patch("kiro_crew.config.loader.config_dir", return_value=config_dir),
+            patch("kiro_crew.cli_config.sel"),
+        ):
+            _config_cmd(args)
+
+        data = json.loads((config_dir / "config.local.json").read_text(encoding="utf-8"))
+        assert data["agent"]["streaming"] is False
+        assert (config_dir / "config.json").read_bytes() == corrupt
 
     def test_nonlocal_set_handles_corrupt_local_file(self, tmp_path: Path) -> None:
         import argparse
