@@ -337,6 +337,35 @@ async def _auto_apply_update(self: GatewayOrchestrator, *, mandatory: bool = Fal
                 )
             return
 
+        # A fresh copy of every memory store, the same copy-or-refuse step
+        # `kirocrew update` takes. Nobody is watching this path, so a copy that
+        # did not land skips the update and says so; it never resets blind and
+        # never exits the gateway. Retried on the next check. It runs BEFORE
+        # the revalidation below on purpose: the copy can take seconds, and
+        # those checks must stay the last thing ahead of the reset.
+        from kiro_crew.platform.wheel_apply import (
+            snapshot_memory_before_update,
+            snapshot_refusal,
+        )
+
+        copied, snapshot_failure = await asyncio.to_thread(snapshot_memory_before_update)
+        if snapshot_failure:
+            snapshot_failure, _ = redact_exfiltration_urls(snapshot_failure)
+            snapshot_failure, _ = redact_credentials(snapshot_failure)
+            snapshot_failure = snapshot_failure[:500]
+            logger.warning(
+                "Auto-update skipped: pre-update memory snapshot failed: %s", snapshot_failure
+            )
+            message = snapshot_refusal(snapshot_failure)
+            self._notice_wheel_update_once(
+                f"snapshot_failed:{target}", "Kiro Crew update skipped", message
+            )
+            if self.dashboard_state:
+                self.dashboard_state.push_update_progress("failed", message)
+                self.dashboard_state.push_refresh("update_available")
+            return
+        logger.info("Auto-update: pre-update memory snapshot, %d store(s) copied", copied)
+
         # LAST-MOMENT REVALIDATION, after the fetch and immediately before the
         # only destructive step. Everything checked so far was checked
         # earlier: the availability verdict came from a separate pass, and
