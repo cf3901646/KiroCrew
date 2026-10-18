@@ -381,6 +381,8 @@ class TestSecretsAreMaskedInEveryMode:
     MASKED = (
         "token_signing.key",
         "refresh_chains.json",
+        # The app-agent launch key's directory: the gateway is its only reader.
+        "app-agent-launch",
         "kas",
         "mcp-apps",
         "ledger",

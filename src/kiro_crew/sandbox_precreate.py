@@ -455,6 +455,10 @@ _CREW_PRECREATE_HIDDEN_DIR_LEAVES: tuple[str, ...] = (
     # for its lifetime; materialised empty at 0700 so the bind always has a
     # target.
     "crew-teams",
+    # The app-agent launch key's directory, created on the first app-owned kiro-cli
+    # turn: without this a sandbox spawned before that turn would see the key appear
+    # unmasked. The key's writer accepts an existing empty 0700 directory.
+    "app-agent-launch",
     # The cross-process work root, and it needs this entry MORE than the stores
     # above rather than less: it is created lazily by the first ``allocate_work``
     # call, so on a fresh home the leaf is absent at every spawn until some job

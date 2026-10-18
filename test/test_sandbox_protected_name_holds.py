@@ -365,7 +365,14 @@ class TestLeafOnlyPopulationIsRecorded:
     #:   sandboxed session cannot rewrite the engine code and Node runtime its
     #:   next session runs. At the data-home root beside writable siblings, so
     #:   leaf-only is the only hold available.
-    EXPECTED: dict[str, int] = {"standard": 284, "cc": 291, "strict": 292}
+    #:
+    #: One more root-level directory, three entries per tier:
+    #:
+    #: * ``app-agent-launch`` -- the per-home key behind an app agent's launch-copy
+    #:   name on kiro-cli (``apps.agent_launch``), masked because only the gateway
+    #:   reads it. Its own directory so the first-use temp is inside the mask; at
+    #:   the data-home root beside writable siblings, so leaf-only is the only hold.
+    EXPECTED: dict[str, int] = {"standard": 287, "cc": 294, "strict": 295}
 
     @pytest.mark.parametrize("tier", TIERS)
     def test_leaf_only_count_has_not_grown(self, tier: str) -> None:

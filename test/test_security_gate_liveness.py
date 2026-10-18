@@ -416,7 +416,11 @@ def _url_payload_command(n: int) -> str:
 #: paragraphs, glue comments, owner imports, owner list, install, class swap and ``__all__``; and
 #: their ``TYPE_CHECKING`` manifests (two each in ``redaction`` and ``exfil``, one in
 #: ``denied_rules``). Every moved statement is unchanged; no rule, threshold or pass changed.
-_PACKAGE_LINE_BUDGET = 31_509
+#:
+#: Raised by two, from 31,509, for the ``app-agent-launch`` entry on the file-tool fence
+#: and its one-line comment: the app-agent launch-name key's directory, which only the
+#: gateway reads and which the sandbox masks too.
+_PACKAGE_LINE_BUDGET = 31_511
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

@@ -148,6 +148,7 @@ class _ChatTurn:
     _native_tracker: "dict[str, dict[Any, Any]]"
     _needs_reinjection: "bool"
     _noticed_leak: "bool"
+    _owner_backend: "str | None"
     _owner_host_allowed: "bool"
     _owner_project: "Any | None"
     _pending_dir_for_digest: "dict[str, str]"

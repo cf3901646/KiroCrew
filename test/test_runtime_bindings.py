@@ -61,7 +61,8 @@ _MEMBERS: dict[str, tuple[str, object, str, str]] = {
     "_RC_NO_PROCESS": ("data", False, "", "runtime"),
     "_REVIVE_ANSWER_DRAIN_TIMEOUT": ("data", False, "", "runtime"),
     "_ROOT_UNREACHED_REASON_BY_VERDICT": ("data", False, "", "runtime"),
-    "__init__": ("function", False, "0b8b7f426389", "runtime"),
+    # Takes ``launch_agent``: the app launch copy kiro-cli is asked for (``apps.agent_launch``).
+    "__init__": ("function", False, "933ec8f4a25b", "runtime"),
     "_activate_mode_bracketed": ("function", True, "3dc699e8b0af", "runtime"),
     "_activates_agent_by_mode": ("function", False, "a6632a57e602", "runtime"),
     "_adopt_skill_projection": ("function", False, "5c4748bee6c5", "runtime"),

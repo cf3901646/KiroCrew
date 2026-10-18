@@ -913,6 +913,10 @@ class AcpRuntime:
     load_session = _rt_load.load_session
     _wait_managed_mcp = _rt_load._wait_managed_mcp
 
+    #: See ``__init__``. Set on the class too, so a runtime built without
+    #: ``__init__`` (a test double, a restored instance) reads as having none.
+    _launch_agent = ""
+
     def __init__(
         self,
         work_dir: str | Path | None = None,
@@ -931,6 +935,7 @@ class AcpRuntime:
         memory_mode: str = "persistent",
         tool_search: ToolSearchSettings | None = None,
         shared_scratch: Path | None = None,
+        launch_agent: str = "",
     ):
         if work_dir:
             self._work_dir = Path(work_dir)
@@ -941,6 +946,12 @@ class AcpRuntime:
 
             self._work_dir = config_dir() / "workspace"
         self._agent = agent
+        # The name kiro-cli is asked for in place of ``agent`` -- on ``--agent`` and
+        # in ``session/set_mode`` -- when they differ: an app's launch copy
+        # (``apps.agent_launch``). Wire-only, like KAS's ``kas_wire_agent_id``:
+        # ``self._agent`` stays the identity every gate, profile, audit row and
+        # hook reads. Empty for every other runtime.
+        self._launch_agent = launch_agent
         # Canonical Kiro Crew agent identity (a cfg.agents key) resolved by the
         # surface that created this runtime — a DIFFERENT namespace from
         # ``agent`` (the kiro template the process spawns with). Default for
@@ -3407,7 +3418,11 @@ class AcpRuntime:
             raise AcpRuntimeDead("runtime is dead")
 
         projection = getattr(self, "_native_skill_projection", None)
-        if projection is not None:
+        if method == METHOD_SET_MODE and self._launch_agent and params.get("modeId") == self._agent:
+            # Re-selecting this runtime's own agent mid-session names its launch
+            # copy, never a view the projection built by name lookup.
+            params = {**params, "modeId": self._launch_agent}
+        elif projection is not None:
             params = projection.request(method, params)
         req_id = self._next_id
         self._next_id += 1
@@ -3589,6 +3604,16 @@ class AcpRuntime:
         nothing -- for a preparation older than (or as old as) the adopted one."""
         if generation <= self._adopted_skill_projection_generation():
             return False
+        previous = getattr(self, "_native_skill_projection", None)
+        launch_copy = getattr(self, "_launch_agent", "")
+        if launch_copy and previous is not None and prepared is not None:
+            # A new preparation lists no launch copy (rosters leave copies out), so
+            # the copy the spawn held as its view is carried over unchanged.
+            held = previous.specs.get(launch_copy)
+            if held is not None:
+                prepared.specs[launch_copy] = held
+            if launch_copy in previous.search_agents:
+                prepared.search_agents.add(launch_copy)
         self._native_skill_projection = prepared
         self._skill_projection_generation = generation
         return True
@@ -4270,7 +4295,7 @@ class AcpRuntime:
         if override or not self._agent:
             return
         if self._harness.verifies_agent_activation:
-            spawn_agent = self._agent
+            spawn_agent = self._wire_mode_id(self._agent) or self._agent
             ids, current, _adv = parse_session_modes(resp)
             if current:
                 if current == spawn_agent:
@@ -4340,8 +4365,24 @@ class AcpRuntime:
         adopted by a concurrent start does not reject the unchanged launch agent
         the strict resolver has no entry for."""
         if mode_agent and mode_agent == self._agent:
+            # A launch copy is activated by its own name, never through a view
+            # built by a name lookup that could reach the checkout's spec.
+            if self._launch_agent:
+                return self._launch_agent
             return str(projection.spawn_agent(mode_agent))
         return str(projection.agent(mode_agent))
+
+    def _wire_mode_id(self, agent: str | None) -> str | None:
+        """The id kiro-cli knows *agent* by: the launch copy for this runtime's own agent."""
+        if agent and self._launch_agent and agent == self._agent:
+            return self._launch_agent
+        return agent
+
+    def crew_agent_name(self, name: str) -> str:
+        """*name* as Crew records it: this runtime's launch copy reads as its own agent."""
+        if name and self._launch_agent and name == self._launch_agent:
+            return self._agent
+        return name
 
     def _superseding_alias(self, projection: Any, mode_agent: str) -> str:
         """*mode_agent*'s alias in a newer view adopted while its start was pending.

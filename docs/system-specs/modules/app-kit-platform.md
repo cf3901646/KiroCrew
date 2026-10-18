@@ -907,6 +907,44 @@ capabilities), with `apps.manager.app_agent_backend_refusal` as the message and 
 `app_agent_refused` row kind. The bare-name check `app_command_agent_refusal` runs
 only on an allowed backend.
 
+On Kiro the turn does not hand kiro-cli the bare name, which kiro-cli resolves
+project-first. `apps.agent_launch.publish_app_agent_launch` copies the app's registered
+`<app>--<agent>.json`, read by its path, to
+`~/.kiro/agents/kirocrew-app-launch-<app tag>-<keyed tag>.json` with `name` set to that
+reserved name. The name is wire-only, like KAS's `kas_wire_agent_id`: the session is
+allocated with `app_launch_agent`, and the Kiro runtime (`AcpRuntime(launch_agent=…)`)
+hands it to kiro-cli on `--agent` and in `session/set_mode`, while the session's agent
+stays the bare name every gate, task profile, audit row, hook and usage row reads; mode
+names kiro-cli reports back are mapped to it (`crew_agent_name`). The keyed tag is an HMAC of
+`<app>/<agent>` under an owner-only per-home secret
+(`<data home>/app-agent-launch/app-agent-launch.key`), so a checkout cannot be prepared
+to claim the name. Only the gateway reads the secret, so its directory is masked in every
+sandbox mode (`sandbox._CREW_HIDDEN_LEAVES`), precreated before every spawn
+(`_CREW_PRECREATE_HIDDEN_DIR_LEAVES`) and refused by the file tools
+(`security._CREW_SECRET_LEAVES`), like the `tag-grants` store key; a link at the
+directory's name refuses the turn. The copy is the registered spec's native skill
+view, the one every Kiro launch runs (`acp.skill_projection.project_agent_view`):
+`skill://` resources are dropped and the agent's skills come through `kirocrew-core`'s
+`skill_search`; a spec that view refuses (its `kirocrew-core` or `skill_search`
+restricted) refuses the turn (`no_skill_view`). Past that only `name` and `description`
+change, so grants and trust are the app's own. The session's skill scope is pinned to
+the registered file (`skill_scope_pin`, set on each turn's admission and cleared on every
+other turn of the key), so `skill_search`, dollar skills and the injected skill directory
+read that file by its path and a checkout's same-named spec never sets the scope. The
+spawn holds the copy as its prepared view and makes the same launch-steering decision
+(`inherits_default_resources`) every Kiro launch makes. The prefix is reserved like the
+skill-view aliases (`acp/managed_agent_shadow.py`): a checkout claiming it refuses the
+kiro-cli spawn. The window every reserved name has, between that spawn-time scan and
+kiro-cli's own read, remains, open only to a writer that already reads
+`~/.kiro/agents` and writes into the checkout inside it. A foreign file at the path, a second user-level spec declaring the name,
+or an unregistered agent refuses the turn. A warm-pool process is never claimed for it
+(`bypass_app_launch`). After the claim, a Kiro provider that did not ask kiro-cli for
+exactly that copy is refused and reset. Rosters (`list_agents`,
+`is_internal_agent_spec`) leave the copies out, and the copy spawns under its own
+reserved name, never through a view built by a name lookup; `_deregister_agents` and an update that drops the agent
+remove an app's copies. KAS keeps the bare
+name: Crew reads the spec it sends. The bare-name check still runs on both.
+
 A `contributes.commands[].agent` that no checked agent path declares is an install
 error. When an agent path was unchecked, that miss is reported as unchecked too, so
 builtin discovery keeps the app listed. An app root the screen refuses links no

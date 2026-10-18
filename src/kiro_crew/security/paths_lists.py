@@ -659,6 +659,8 @@ _CREW_SECRET_LEAVES: list[str] = [
     # closes the forge path, since the text/argv file gate alone does not stop a
     # runtime-constructed shell write.
     "file-delivery-consent-pending",
+    # The gateway-only app-agent launch-name key and its temp (``apps.agent_launch``).
+    "app-agent-launch",
     "token_signing.key",
     "refresh_chains.json",
     # The staging directory the two leaves above publish through. Both are masked as

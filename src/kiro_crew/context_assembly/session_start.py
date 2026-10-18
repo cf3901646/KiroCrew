@@ -536,7 +536,11 @@ def build_session_context(
     # Mapped agents get scoped discovery on both backends. Unmapped: kirocrew only.
     # Shared with the post-compaction re-injection in build_message.
     inject_skills, skill_globs = ctx._skills_injection_plan(
-        agent, is_cc=is_cc, project_dir=project, provider_type=provider_type
+        agent,
+        is_cc=is_cc,
+        project_dir=project,
+        provider_type=provider_type,
+        session_key=session_key,
     )
     if inject_skills:
         required_skills, skills_ctx = _inclusion.skill_parts(

@@ -365,6 +365,14 @@ _CREW_HIDDEN_LEAVES: tuple[str, ...] = (
     # hooks) and ``kirocrew agent create`` / ``delete`` from the operator's shell. Whole
     # directory: ``atomic_write`` publishes through a sibling temp.
     "crew-teams",
+    # The per-home secret behind an app agent's launch-copy name on kiro-cli
+    # (``apps.agent_launch``). Only the gateway reads it, when it publishes a copy
+    # before a turn, so masking costs no in-sandbox reader. Whole DIRECTORY, like
+    # ``tag-grants`` and its store key: the key is created on first use through a temp
+    # staged beside it, and a mask covers a path, so both live inside one masked name.
+    # In ``_CREW_PRECREATE_HIDDEN_DIR_LEAVES`` too, because nothing creates it before
+    # the first app-owned kiro-cli turn.
+    "app-agent-launch",
     # Auth stores and signing keys owned by the gateway web server alone.
     "token_signing.key",
     "refresh_chains.json",

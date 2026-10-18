@@ -16,7 +16,7 @@ Instance fields written: ``_entitlement_probe_attempt_at``, ``_entitlement_probe
 Instance fields read: ``_agent``, ``_agent_capabilities``, ``_crew_agent``, ``_dead``,
 ``_entitlement_probe_lock``, ``_expect_mcp_reports``, ``_initialized``,
 ``_mcp_gateway_overlay``, ``_member_context``, ``_pending_init_notifications``, ``_pid``,
-``_process``, ``_start_collect_timeout``, ``_work_dir``.
+``_process``, ``_start_collect_timeout``, ``_wire_mode_id``, ``_work_dir``.
 """
 
 from __future__ import annotations
@@ -211,7 +211,9 @@ async def create_session(
             pooled, ref_spec = await asyncio.to_thread(
                 _pooled_session_servers_and_ref_spec,
                 self._mcp_gateway_overlay,
-                agent or self._agent,
+                # The spec kiro-cli runs: a launch copy's stubs and snapshot
+                # are its own, never the bare name's.
+                self._wire_mode_id(agent or self._agent),
                 self.acp_backend,
                 session_work_dir,
             )
@@ -774,7 +776,11 @@ async def _finish_create_session(
     # The id the host knows the agent by: a wire-registered batch went out under
     # kas_wire_agent_id (attach_kas_custom_agents), so the advertised modes and
     # set_mode name that; everything Crew records keeps the crewmate's own id.
-    mode_wire = kas_wire_agent_id(mode_agent) if mode_agent and kas_agents else mode_agent
+    mode_wire = (
+        kas_wire_agent_id(mode_agent)
+        if mode_agent and kas_agents
+        else self._wire_mode_id(mode_agent)
+    )
     refusal = self._harness.activation_refusal(mode_wire, resp) if mode_wire else None
     if refusal:
         await self.terminate_session(session_id)
