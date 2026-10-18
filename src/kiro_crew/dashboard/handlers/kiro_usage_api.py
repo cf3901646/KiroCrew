@@ -945,6 +945,69 @@ class UsageResult(NamedTuple):
     auth_state: str
 
 
+class _Attempt(NamedTuple):
+    """One GetUsageLimits call with one credential.
+
+    ``result`` is set when the call is final for every credential: a mapped
+    reading, or a 200 whose body has no usable CREDIT breakdown (another token
+    would get the same body). Otherwise it is ``None`` and ``reason`` /
+    ``unauthorized`` say why this credential failed, so a caller holding more
+    candidates moves on.
+    """
+
+    result: UsageResult | None
+    reason: str = ""
+    unauthorized: bool = False
+
+
+def _get_usage(token: str, arn: str | None, *, name_anchor: str | None, endpoint: str) -> _Attempt:
+    """THE GetUsageLimits request and response mapping, for one credential.
+
+    Shared by :func:`fetch_usage_limits` (each discovered candidate) and
+    :func:`fetch_usage_limits_with_credential` (Crew's vault token), so the
+    payload, the 401-only ``AUTH_REJECTED`` rule and the CREDIT mapping have one
+    copy. ``arn`` goes in the payload; ``name_anchor`` is the anchor the
+    ListAvailableProfiles probe was asked about, which keys the display-name
+    cache. Raises nothing it does not raise today: callers wrap it.
+    """
+    payload: dict[str, object] = {"origin": "AI_EDITOR"}
+    if arn:
+        payload["profileArn"] = arn
+    try:
+        r = _post(token, _TARGET_GET_USAGE, payload, endpoint=endpoint)
+    except _RequestError as e:
+        reason = f"request failed: {type(e).__name__}"
+        logger.debug("Kiro usage API %s", reason)
+        return _Attempt(None, reason)
+    if r.status_code != 200:
+        # Do not log the token, only the status. 401 only: see AUTH_REJECTED for
+        # why a 403 must not be read as an auth refusal.
+        reason = f"HTTP {r.status_code}"
+        logger.debug("Kiro usage API returned %s", reason)
+        return _Attempt(None, reason, unauthorized=r.status_code == 401)
+    try:
+        body = r.json()
+    except ValueError:
+        logger.debug("Kiro usage API returned a non-JSON body")
+        return _Attempt(None, "non-JSON body")
+    mapped = _map_response(body)
+    if mapped is None:
+        # A shape problem, not an auth one: another token would return the same
+        # body, so the caller stops here.
+        _note_api_outcome(False, "no usable CREDIT breakdown in response")
+        return _Attempt(UsageResult(None, AUTH_OTHER))
+    # WHO the plan belongs to: the profile display name the ARN probe cached.
+    # Absent for individual Builder ID accounts, which have no profile.
+    account = _account_name(token, name_anchor)
+    if account:
+        mapped["account"] = account
+    # Coupling metadata for the caller's identity check (private -- stripped
+    # before the payload is cached or served). None for individual accounts.
+    mapped["_profile_arn"] = arn
+    _note_api_outcome(True)
+    return _Attempt(UsageResult(mapped, AUTH_OK))
+
+
 def fetch_usage_limits(expected_arn: str | None) -> UsageResult:
     """Fetch real credit usage via the direct RTS API. Synchronous (uses urllib).
 
@@ -1054,58 +1117,18 @@ def fetch_usage_limits(expected_arn: str | None) -> UsageResult:
                     "does not match the signed-in account"
                 )
                 continue
-            payload: dict[str, object] = {"origin": "AI_EDITOR"}
-            if arn:
-                payload["profileArn"] = arn
-            try:
-                r = _post(token, _TARGET_GET_USAGE, payload, endpoint=endpoint)
-            except _RequestError as e:
-                reason = f"request failed: {type(e).__name__}"
-                logger.debug("Kiro usage API %s", reason)
-                continue  # try the next candidate token
-            if r.status_code != 200:
-                # Fail over to the next token — do not log the token, only the status.
-                reason = f"HTTP {r.status_code}"
-                if r.status_code == 401:
-                    # The API refuses this credential. 401 only: see
-                    # AUTH_REJECTED for why a 403 must not be read this way.
-                    saw_unauthorized = True
-                logger.debug("Kiro usage API returned %s", reason)
-                continue
-            try:
-                body = r.json()
-            except ValueError:
-                reason = "non-JSON body"
-                logger.debug("Kiro usage API returned %s", reason)
-                continue
-            mapped = _map_response(body)
-            if mapped is not None:
-                # Tag the usage with WHO the plan belongs to (profile display
-                # name from the ListAvailableProfiles probe above). Absent for
-                # individual Builder ID accounts, which have no profile.
-                account = _account_name(token, expected_arn)
-                if account:
-                    mapped["account"] = account
-                # Coupling metadata for the caller's identity check (private —
-                # stripped before the payload is cached or served).
-                #
-                # These numbers now provably belong to the account kiro-cli is
-                # signed in as: no candidate with a different ARN could have
-                # reached this point. The ARN is still handed back because
-                # matching on ``None`` (both sides have no profile — a Builder ID
-                # account) is weaker than matching a specific ARN: two different
-                # Builder ID accounts both present no ARN, so that case is
-                # consistent but not proof of the same account. The caller's
-                # ``_identity_matches_account`` encodes exactly that distinction
-                # and is what decides whether an email may sit next to an overage
-                # figure.
-                mapped["_profile_arn"] = arn  # None for individual accounts
-                _note_api_outcome(True)
-                return UsageResult(mapped, AUTH_OK)
-            # A 200 with no usable CREDIT breakdown is a shape problem, not an auth
-            # one — another token would return the same body, so stop here.
-            _note_api_outcome(False, "no usable CREDIT breakdown in response")
-            return UsageResult(None, AUTH_OTHER)
+            # These numbers provably belong to the account kiro-cli is signed in
+            # as: no candidate with a different ARN could have reached this
+            # point. The ARN still rides back (see _get_usage) because matching
+            # on ``None`` -- two Builder ID accounts both present none -- is
+            # consistent but not proof; ``_identity_matches_account`` decides
+            # whether an email may sit next to an overage figure.
+            attempt = _get_usage(token, arn, name_anchor=expected_arn, endpoint=endpoint)
+            if attempt.result is not None:
+                return attempt.result
+            reason = attempt.reason
+            saw_unauthorized = saw_unauthorized or attempt.unauthorized
+            continue  # try the next candidate token
         except Exception:  # noqa: BLE001 — never let an unexpected shape escape
             # Any unforeseen parsing/attribute error for one token must not
             # propagate: it would make _fetch_usage_bg cache {"available": False}
@@ -1115,3 +1138,42 @@ def fetch_usage_limits(expected_arn: str | None) -> UsageResult:
             continue
     _note_api_outcome(False, f"all {len(candidates)} candidate credential(s) failed; last: {reason}")
     return UsageResult(None, AUTH_REJECTED if saw_unauthorized else AUTH_OTHER)
+
+
+def fetch_usage_limits_with_credential(token: str, profile_arn: str | None) -> UsageResult:
+    """Fetch credit usage with ONE caller-supplied credential. Synchronous (urllib).
+
+    The path for Kiro Crew's own sign-in vault, which needs no kiro-cli: the
+    caller resolves (and refreshes) the vault's access token and hands it here
+    with the profile ARN stored beside it. No credential store is enumerated, so
+    the ownership proofs :func:`fetch_usage_limits` applies to DISCOVERED
+    candidates do not arise -- a vault token is the signed-in Crew account's
+    credential by construction, the same provenance argument that admits a token
+    from kiro-cli's own store.
+
+    The stored ARN is used as-is. Without one (Builder ID, social) the
+    ListAvailableProfiles probe's first ARN is used when the token lists any,
+    which an enterprise identity stored without its ARN needs to avoid a 403.
+
+    Same contract as :func:`fetch_usage_limits`: never raises, never logs the
+    token, and the request/mapping is the one :func:`_get_usage` body.
+    """
+    if not token:
+        return UsageResult(None, AUTH_NO_CREDENTIAL)
+    endpoint = _rts_endpoint(profile_arn)
+    try:
+        arn = profile_arn or _list_profile_arn(token, endpoint=endpoint)
+        if profile_arn:
+            # Fills the display-name cache only; the stored ARN is the answer.
+            _list_profile_arn(token, expected_arn=profile_arn, endpoint=endpoint)
+        elif arn:
+            # A discovered ARN names its own region; send the read there.
+            endpoint = _rts_endpoint(arn)
+        attempt = _get_usage(token, arn, name_anchor=profile_arn, endpoint=endpoint)
+    except Exception:  # noqa: BLE001 - never let an unexpected shape escape
+        logger.debug("Kiro usage API: unexpected error for the vault credential", exc_info=True)
+        return UsageResult(None, AUTH_OTHER)
+    if attempt.result is not None:
+        return attempt.result
+    _note_api_outcome(False, f"vault credential failed: {attempt.reason}")
+    return UsageResult(None, AUTH_REJECTED if attempt.unauthorized else AUTH_OTHER)

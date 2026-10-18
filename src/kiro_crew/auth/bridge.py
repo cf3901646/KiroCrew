@@ -51,25 +51,31 @@ def _usable(token: KasToken) -> bool:
     return token.is_usable()
 
 
-def vault_holds_identity() -> bool:
+def vault_holds_identity(*, warn: bool = True) -> bool:
     """True when Crew's own vault stores a USABLE Kiro identity (of any stored kind).
 
     The spawn-time question the KAS relay asks before choosing its auth owner
-    (:mod:`kiro_crew.acp.kas_host_auth`), also reported by ``kirocrew doctor``.
-    A plain read of the vault -- no refresh, no network -- that never raises: a
-    missing, unreadable, or linked vault directory is ``False`` (the unreadable
-    case logged at WARNING), and so is an identity whose access token has expired
-    with no refresh token to renew it -- that entry cannot answer a single
-    callback, so handing the spawn to it would only shadow a working ``kiro-cli
-    login``. Both degrade to the kiro-cli-owned spawn rather than failing the
-    spawn. Blocking file IO -- call off the loop.
+    (:mod:`kiro_crew.acp.kas_host_auth`), also reported by ``kirocrew doctor``
+    and asked by the dashboard's usage poll. A plain read of the vault -- no
+    refresh, no network -- that never raises: a missing, unreadable, or linked
+    vault directory is ``False`` (the unreadable case logged at WARNING), and so
+    is an identity whose access token has expired with no refresh token to renew
+    it -- that entry cannot answer a single callback, so handing the spawn to it
+    would only shadow a working ``kiro-cli login``. Both degrade to the
+    kiro-cli-owned spawn rather than failing the spawn. Blocking file IO -- call
+    off the loop.
+
+    ``warn=False`` logs those diagnostics at DEBUG instead of WARNING, for a
+    caller that asks on a timer (the usage poll) where a spawn-time diagnostic
+    would repeat on every tick; the verdict is the same either way.
     """
+    log = logger.warning if warn else logger.debug
     try:
         token = default_token_store().resolve()
         if token is None:
             return False
         if not _usable(token):
-            logger.warning(
+            log(
                 "Crew sign-in vault holds an expired %s identity with nothing to renew it; "
                 "KAS spawns cli-owned (sign in again or sign out to clear it)",
                 token.identity,
@@ -79,10 +85,10 @@ def vault_holds_identity() -> bool:
     except TokenStoreError as exc:
         # `exc` is a store-level reason (a path or a permissions verdict), never
         # a stored value -- the store raises before decrypting anything.
-        logger.warning("Crew sign-in vault unreadable; KAS spawns cli-owned: %s", exc)
+        log("Crew sign-in vault unreadable; KAS spawns cli-owned: %s", exc)
         return False
     except Exception as exc:  # noqa: BLE001 - a vault probe must never fail a spawn
-        logger.warning(
+        log(
             "Crew sign-in vault probe failed (%s); KAS spawns cli-owned",
             type(exc).__name__,
         )
