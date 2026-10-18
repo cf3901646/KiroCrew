@@ -40,6 +40,7 @@ from kiro_crew.dashboard.chat_persistence import (
 )
 from kiro_crew.dashboard.chat_utils import effective_session_key
 from kiro_crew.dashboard.handlers._shared import require_owner_dashboard_request
+from kiro_crew.dashboard.slot_approval_seed import seed_slot_approval
 from kiro_crew.dashboard.state import DashboardState, request_slot_origin
 from kiro_crew.external_text import redact_external_text
 from kiro_crew.members import MemberSlugError
@@ -1508,25 +1509,7 @@ def _seed_member_approval(state: DashboardState, slot: Any, mode: str) -> None:
         return
     slot._member_approval_seeded = True
     effective = mode or MEMBER_APPROVAL_MODE_UNSET_EFFECTIVE
-    if effective == "normal" or slot._trust or slot._trust_reads or slot._trust_scope:
-        return
-    key = effective_session_key(slot)
-    for sharing in state._slots.values():
-        if effective_session_key(sharing) == key:
-            if effective == "trust":
-                sharing._trust = True
-            else:
-                sharing._trust_reads = True
-    state.sessions.set_approval_policy(key, "auto" if effective == "trust" else "")
-    try:
-        _sel().log_api_access(
-            caller="dashboard:member_profile",
-            operation=f"mode_change:{effective}",
-            outcome="enabled",
-            resources=slot.key,
-        )
-    except Exception:  # pragma: no cover - audit must never change the outcome
-        logger.warning("SEL audit failed for member approval seed", exc_info=True)
+    seed_slot_approval(state, slot, effective, caller="dashboard:member_profile", sel=_sel)
 
 
 async def api_member_projections(request: web.Request) -> web.Response:

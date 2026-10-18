@@ -378,8 +378,8 @@ To update an existing app:
 If the panel reads **Workspace not enabled**, the app has the scopes but Slack has not
 turned code channels on for your workspace; a workspace admin has to enable it.
 
-For code channels you can also set a default folder, agent, model and reasoning effort for
-new code channels; see [Slack integration](../../src/kiro_crew/docs/slack-integration.md#slack-code-agent-sessions-and-code-channels).
+For code channels you can also set a default folder, agent, model, reasoning effort and
+approval mode for new code channels; see [Slack integration](../../src/kiro_crew/docs/slack-integration.md#slack-code-agent-sessions-and-code-channels).
 With nothing set, code channels go into a **Code channels** sidebar folder, created the first
 time one is needed and set to run `kirocrew-conductor`. To use another folder, pick it, or
 choose **New folder…** in the folder list to create one there.
@@ -409,6 +409,39 @@ If a turn is running when you pick, nothing changes and you get a message asking
 try again when the turn ends. Only the owner can change a channel's agent. Anyone else gets
 a message only they can see, and nothing changes. Each change, and each refused one, is
 recorded in the security event log.
+
+### Approval mode for code channels
+
+A code channel is driven from Slack, where nobody may be watching the dashboard to answer
+an approval prompt. **Approval mode** on the Code channels card
+(`slack.code_channel_defaults.approval_mode`) picks the mode each new code channel's
+session starts in:
+
+| Picker | Config value | A new code channel's session |
+|---|---|---|
+| Normal (default) | `ask` (or unset) | asks before every tool call, as before |
+| Reads | `trust_reads` | runs read-only shell commands without asking; asks for everything else |
+| Trust | `trust` | runs every tool without asking |
+
+> **Trust is a real grant.** With Trust, anyone allowed to talk to the bot in that channel
+> drives an agent whose tools run without prompts, and sessions the agent spawns inherit
+> that posture. Pick it only for channels whose members you would hand a shell.
+
+The mode is applied once, when the code channel's dashboard session is created, through
+the same per-session approval the dashboard's approval picker sets, and is recorded in the
+security event log as `mode_change:<mode>` by `slack:code_channel`. It never turns on
+YOLO and never ends a YOLO grant. After that the session is an ordinary one: change its
+mode in the session's own approval picker at any time. Like every session's approval mode
+it is held in memory, so after a gateway restart the session asks again until someone
+picks a mode on it. A change to this setting applies to the next new code channel;
+existing ones keep the mode they have.
+
+There is no per-channel override hook: Crew's script hooks (`AgentSpawn`,
+`UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) run once a turn is under way
+and can only add context or decide one tool call, not choose a session's approval mode.
+To keep one channel on Normal, change the mode on that channel's session. If that session
+is closed, the channel's next message opens a new session, which starts in the configured
+mode again.
 
 ---
 
