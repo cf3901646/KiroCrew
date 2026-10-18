@@ -201,18 +201,25 @@ def read_effective_model(source: object) -> str:
 
 
 def _source_requests_auto(source: object) -> bool:
-    """Whether the provider chain still reports Auto as its model request.
+    """Whether the provider chain reports Auto, as a request or from the backend.
 
     This is deliberately separate from :func:`read_effective_model`: ``auto``
     is not a resolved model id, but it is useful attribution when a completed
-    turn has no more specific id from the backend. A blank request does not
-    prove Auto was selected, so it remains blank in the row store.
+    turn has no more specific id from the backend. Two signals count: a
+    ``_model`` request of ``auto``, and a ``_resolved_model_id`` of ``auto``.
+    The second is what a session on the default model holds: the start path
+    never calls ``set_model`` for it, so ``_model`` stays ``""``, while
+    ``session/new`` stores the backend's ``currentModelId`` (``auto``) as the
+    resolved id. That is the backend saying Auto served the session. A blank
+    ``_model`` with a blank or missing ``_resolved_model_id`` proves nothing
+    was selected, so it remains blank in the row store.
     """
     try:
         return any(
-            isinstance(candidate := getattr(node, "_model", ""), str)
+            isinstance(candidate := getattr(node, attr, ""), str)
             and candidate.strip().lower() == "auto"
             for node in _wrapper_chain(source)
+            for attr in ("_model", "_resolved_model_id")
         )
     except Exception:
         return False
@@ -231,7 +238,10 @@ def read_turn_model(source: object) -> str:
     honest answer to "who chose", which is all the backend discloses when
     Auto routes a turn (the ACP per-turn metadata frame carries context and
     metering only). Callers that need a concrete id for a pricing or window
-    lookup must keep using :func:`read_effective_model`. Never raises.
+    lookup must keep using :func:`read_effective_model`. ``"auto"`` comes back
+    when the chain requests Auto or the backend reported ``auto`` as the
+    resolved id (a session left on the default model); a chain with neither
+    stays ``""``. Never raises.
     """
     resolved = read_effective_model(source)
     if resolved:
