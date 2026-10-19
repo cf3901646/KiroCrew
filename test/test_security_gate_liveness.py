@@ -416,7 +416,13 @@ def _url_payload_command(n: int) -> str:
 #: paragraphs, glue comments, owner imports, owner list, install, class swap and ``__all__``; and
 #: their ``TYPE_CHECKING`` manifests (two each in ``redaction`` and ``exfil``, one in
 #: ``denied_rules``). Every moved statement is unchanged; no rule, threshold or pass changed.
-_PACKAGE_LINE_BUDGET = 31_509
+#:
+#: Raised by 15, from 31,509, for each harness's own permission files on the write
+#: tier: the leaf splice and the project-file matcher alias in ``paths_lists``; the
+#: leaves joining the symlink and override arms, and the resolved-root list those arms
+#: now share, in ``paths_targets``; and one ``or`` clause, its import and three
+#: ``TYPE_CHECKING`` lines in ``paths``. The registry lives in ``agent_sdk``.
+_PACKAGE_LINE_BUDGET = 31_524
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

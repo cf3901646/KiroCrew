@@ -7348,7 +7348,6 @@ class TestAdaptiveHomeTargetsExpiry:
         than spelled out here, so adding a sensitive LEAF keeps this passing and
         adding a resolve CALL SITE fails it.
         """
-        from kiro_crew.agent_sdk import host_auth
         from kiro_crew.security import paths as gate
 
         crew_home = tmp_path / "crew"
@@ -7367,7 +7366,7 @@ class TestAdaptiveHomeTargetsExpiry:
         # written for another purpose makes the fifth class's coverage depend on a
         # variable no reader of this test can see -- and the assertion at the end
         # would then pass or go vacuous for reasons outside this file.
-        for _override_env in host_auth.home_override_env_vars():
+        for _override_env in gate._ADAPTER_ROOT_ENVS:
             _override_root = tmp_path / f"override-{_override_env.lower()}"
             _override_root.mkdir(exist_ok=True)
             monkeypatch.setenv(_override_env, str(_override_root))
@@ -7425,7 +7424,7 @@ class TestAdaptiveHomeTargetsExpiry:
             # Both kiro-cli leaves have their ``$HOME``-rooted form resolved, so a
             # symlink below the home root cannot move the real file out of the
             # fence. Derived from the same tuple the build reads.
-            for _cli_leaf in gate._KIRO_CLI_WRITE_TIER_LEAVES:
+            for _cli_leaf in (*gate._KIRO_CLI_WRITE_TIER_LEAVES, *gate._NATIVE_ALLOW_STORE_LEAVES):
                 if _cli_leaf in tier:
                     expected.add(os.path.join(roots.home, *gate._leaf_segments(_cli_leaf)))
             if roots.kiro_home and gate._KIRO_AGENTS_DIR in tier:

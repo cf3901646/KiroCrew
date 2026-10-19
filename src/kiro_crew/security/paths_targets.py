@@ -22,12 +22,13 @@ import time
 from pathlib import Path
 from typing import NamedTuple
 
-from kiro_crew.agent_sdk import host_auth
+from kiro_crew.agent_sdk import host_auth, native_allow_stores
 
 from .paths_lists import (
     _CREW_HOME_PREFIXES,
     _KEYSTONE_ARTIFACT_PARENTS,
     _KIRO_CLI_WRITE_TIER_LEAVES,
+    _NATIVE_ALLOW_STORE_LEAVES,
     _SENSITIVE_HOME_DIRS,
     _WRITE_PROTECTED_HOME_PATHS,
     _leaf_segments,
@@ -352,7 +353,7 @@ def _anchor_targets(
     # resolved spelling when they differ) and guarded on *home_dirs* membership for
     # the same reason as the overrides below: both leaves are write-tier only, so a
     # target must not leak into the read gate.
-    for _cli_leaf in _KIRO_CLI_WRITE_TIER_LEAVES:
+    for _cli_leaf in (*_KIRO_CLI_WRITE_TIER_LEAVES, *_NATIVE_ALLOW_STORE_LEAVES):
         if _cli_leaf not in home_dirs:
             continue
         _cli_full = os.path.join(home, *_leaf_segments(_cli_leaf))
@@ -837,7 +838,11 @@ class _ResolvedRoots(NamedTuple):
 #: Read once at import, like the leaf list itself: the declarations are static
 #: data, and re-projecting per gate call would put a table walk on the hot path.
 _OVERRIDE_ANCHORED_LEAVES: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    host_auth.override_anchored_leaves()
+    host_auth.override_anchored_leaves() + native_allow_stores.override_anchored_leaves()
+)
+#: Every variable an anchored leaf names; each root is resolved and keys the cache.
+_ADAPTER_ROOT_ENVS: tuple[str, ...] = tuple(
+    dict.fromkeys(host_auth.home_override_env_vars() + native_allow_stores.override_env_vars())
 )
 
 
@@ -917,7 +922,7 @@ def _resolve_root_anchors(logical_home: str) -> _ResolvedRoots:
     and it is the one the crash dumps named.
     """
     overrides = {field: _expanded_env_root(env) for field, env in _OVERRIDE_ROOT_ENVS}
-    adapters = tuple((env, _expanded_env_root(env)) for env in host_auth.home_override_env_vars())
+    adapters = tuple((env, _expanded_env_root(env)) for env in _ADAPTER_ROOT_ENVS)
     wanted = [logical_home, *overrides.values(), *(root for _env, root in adapters)]
     distinct = list(dict.fromkeys(p for p in wanted if p is not None))
     answers = dict(zip(distinct, _realpaths_or_none(distinct)))

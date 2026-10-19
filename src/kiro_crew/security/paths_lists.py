@@ -15,7 +15,7 @@ gates read these lists, and this module imports no other part of the path floor.
 
 from __future__ import annotations
 
-from kiro_crew.agent_sdk import host_auth
+from kiro_crew.agent_sdk import host_auth, native_allow_stores
 from kiro_crew.identity_stores import AUTH_SQLITE_DB, AUTH_SQLITE_SIDECAR_SUFFIXES, fenced_home_dirs
 from kiro_crew.memory_stores import MEMORY_STORES_DIR_NAME
 
@@ -1323,6 +1323,11 @@ _KIRO_CLI_WRITE_TIER_LEAVES: tuple[str, ...] = (
     _KIRO_SETTINGS_MCP_JSON,
 )
 
+
+# Other harnesses' own permission files: the same threat, anchored like the leaves above.
+_NATIVE_ALLOW_STORE_LEAVES: tuple[str, ...] = native_allow_stores.home_leaves()
+_WRITE_PROTECTED_HOME_PATHS += list(_NATIVE_ALLOW_STORE_LEAVES)
+_native_store_write = native_allow_stores.matches_store  # a project's claude settings
 
 _WRITE_PROTECTED_HOME_PATHS += [
     # Operator-authored panel templates (agent_panel.py). WRITE-protected rather
