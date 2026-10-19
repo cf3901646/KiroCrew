@@ -2198,8 +2198,13 @@ draft guard, so a veto neither remounts the card nor loses its pushed form.
   `crewmate.key_results` card (nothing changes until the user presses it). Any
   turn in the crewmate's own pinned thread may raise its `goal`, `key_results`
   and `check_ins` cards through `member.propose_self`, whether or not the user
-  sent it (`handlers.guide.REQ_OWN_GOAL_TURN`; a channel turn is refused);
-  every other card, and `propose_change`, stays user-turn only.
+  sent it (`handlers.guide.REQ_OWN_GOAL_TURN`; a channel turn is refused).
+  So may a `capabilities` card whose draft only names `additions` of servers
+  this gateway already runs (`source: "gateway"`, `member_self._gateway_servers_only`):
+  the worker-report wake that reads `MISSING CAPABILITY` is not a user turn,
+  and that card brings in no outside code and changes nothing until pressed.
+  Every other card (a registry install, a skill, a raw operations draft, the
+  model, the approval mode), and `propose_change`, stays user-turn only.
 - the **goal-setup nudge** (`dashboard/goal_setup.py`): adding a goal or really
   changing one's text (the Goals tab or an applied `crewmate.goal` card; not an
   Undo, not an edit at or above 0.9 similarity) sends the
