@@ -344,33 +344,22 @@ async def handle_slash(
         surface.audit(user, operation, "denied", resources, "not a bound code channel")
         await respond(NOT_A_CODE_CHANNEL_TEXT)
         return True
-    if command == AGENT:
-        from kiro_crew.slack.code_channels import agent_picker
+    if command in _APP_SUBCOMMANDS:
+        # `/kirocrew agent` and `/kirocrew trust`: one owner gate, one handler
+        # shape (``authorize`` / ``handle_command``), each module's own audit.
+        from kiro_crew.slack.code_channels import agent_picker, approval_picker
 
-        refusal = await agent_picker.authorize(
+        picker = agent_picker if command == AGENT else approval_picker
+        refusal = await picker.authorize(
             orch, binding, user, team, f"channel={channel} user={user} via=command"
         )
         if refusal is not None:
-            surface.audit(user, operation, "denied", resources, "agent change refused")
+            surface.audit(user, operation, "denied", resources, f"/{command} change refused")
             if refusal:
                 await respond(refusal)
             return True
         surface.audit(user, operation, "allowed", resources)
-        await agent_picker.handle_command(orch, binding, user, text, respond)
-        return True
-    if command == TRUST:
-        from kiro_crew.slack.code_channels import approval_picker
-
-        refusal = await approval_picker.authorize(
-            orch, binding, user, team, f"channel={channel} user={user} via=command"
-        )
-        if refusal is not None:
-            surface.audit(user, operation, "denied", resources, "approval mode change refused")
-            if refusal:
-                await respond(refusal)
-            return True
-        surface.audit(user, operation, "allowed", resources)
-        await approval_picker.handle_command(orch, binding, user, text, respond)
+        await picker.handle_command(orch, binding, user, text, respond)
         return True
     from kiro_crew.slack.code_channels.routing import (
         Gate,

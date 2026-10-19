@@ -136,9 +136,14 @@ def kickoff_blocks(
     if names:
         blocks.append(_agent_block(names, selected))
     if approval_mode is not None:
-        from kiro_crew.slack.code_channels.approval_picker import approval_block
+        from kiro_crew.slack.code_channels.approval_picker import approval_block, yolo_note
 
         blocks.append(approval_block(approval_mode))
+        if yolo_note():
+            # The select has no YOLO state: say so, or it reads Ask under YOLO.
+            blocks.append(
+                {"type": "context", "elements": [{"type": "mrkdwn", "text": yolo_note()}]}
+            )
     if note and len(blocks) > 1:
         blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": note}]})
     return blocks
@@ -303,7 +308,7 @@ async def authorize(
     audit: Callable[[str, str, str], None] | None = None,
     not_allowed: str = NOT_ALLOWED_TEXT,
 ) -> str | None:
-    """None when *user* may change *binding*'s agent; else the refusal to show.
+    """None when *user* may change *binding*'s settings; else the refusal to show.
 
     The gates every code-channel command applies, in its order, each refusal
     SEL-audited: the workspace, the owner, the code channel and its origin both

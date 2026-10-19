@@ -444,19 +444,23 @@ is closed, the channel's next message opens a new session, which starts in the c
 mode again.
 
 **Changing it from the channel.** Only you (the bot's owner) can change a channel's mode
-from Slack, two ways:
+from Slack, two ways (Ask is the dashboard's Normal, Trust reads its Reads):
 
 - **The picker in the first message.** Below **Agent for this channel**, the kickoff has an
-  **Approval mode** menu (Ask / Trust reads / Trust), set to the mode the channel's session
-  holds now. Pick another and the session switches; the message then shows the new mode
-  and who set it.
-- **`/<command> trust ask|reads|all`.** Sets Ask, Trust reads or Trust. `/<command> trust`
-  with nothing after it shows the channel's current mode. In a code channel this changes
-  only that channel.
+  **Approval mode** menu (Ask / Trust reads / Trust), showing the session's mode as of the
+  last time the message was drawn: a change made on the dashboard, or a gateway restart,
+  does not redraw it. Pick another and the session switches; the message then shows the
+  new mode and who set it, until the next change to either menu.
+- **`/<command> trust ask|reads|all`** (code channels only). `ask` sets Ask, `reads` Trust
+  reads, `all` Trust. `/<command> trust` with nothing after it shows the channel's current
+  mode. Outside a code channel it is not a command (you get the help list).
 
 Both go through the same audited change as the session's own approval picker on the
-dashboard. Picking Trust posts a warning line in the channel. Anyone else gets a message
-only they can see, and nothing changes.
+dashboard. Switching to Trust either way posts a warning line in the channel. Ask also
+ends a YOLO grant if one is on, as Normal does on the dashboard; YOLO covers every
+session, so the reply says so, and while YOLO is on the first message carries a line
+saying tools run without asking whatever the menu shows. Anyone else gets a message only
+they can see, and nothing changes.
 
 **Approval prompts in the channel.** When a code channel's session needs an approval, the
 **Tool approval requested** card is posted in the channel itself, where the agent's
@@ -615,6 +619,7 @@ The slash command name is configurable via `slack.command` in config (default: `
 | `/<command> yolo` | Toggle auto-approve all tool calls |
 | `/<command> agent` | Show agent selector dropdown |
 | `/<command> agent <name>` | Switch to a named agent (in a code channel: switch that channel's agent) |
+| `/<command> trust ask\|reads\|all` | Code channels only: set that channel's approval mode (Ask / Trust reads / Trust) |
 | `/<command> voice` | Configure TTS voice settings |
 | `/<command> config` | Manage tracked channels (owner-only; multi-user access is disabled) |
 | `/<command> users` | Report that multi-user access is disabled |

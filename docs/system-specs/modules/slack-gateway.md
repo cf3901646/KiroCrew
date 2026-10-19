@@ -2018,9 +2018,11 @@ the hooks never fire, and `kirocrew-core` lists none of the tools.
   A pick (`approval_picker.handle_select`, routed through
   `worker_approvals.dispatch_card_click`) and `/kirocrew trust [ask|reads|all]` (a
   `commands.handle_slash` sub-command beside `agent`; bare shows the mode; outside a
-  code channel it is the app's own command) both pass `agent_picker.authorize` and run
+  code channel it is not a sub-command and falls to the help text) both pass `agent_picker.authorize` and run
   `approval_picker.set_channel_mode`, i.e. `apply_approval_mode`; the kickoff is
-  re-drawn with who set it and Trust posts the warning line.
+  re-drawn with who set it and Trust posts the warning line. While the YOLO override is
+  on, a pick is never answered as unchanged (Ask must reach `apply_approval_mode` to end
+  it), the reply says when it ended, and the kickoff carries a YOLO line.
 - **Worker approvals.** A prompt raised in a session the channel's CURRENT session
   created (`_created_by`, resolved back through `surface.binding_for_slot`; not
   Slack-linked itself; feature on; channel not archived) is relayed by

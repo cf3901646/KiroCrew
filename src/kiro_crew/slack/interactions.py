@@ -718,11 +718,13 @@ async def dispatch(payload: dict) -> None:
             resources=action_id,
             error="unauthorized user",
         )
-        from kiro_crew.slack.code_channels import agent_picker
+        from kiro_crew.slack.code_channels import agent_picker, approval_picker
 
         if action_id == agent_picker.AGENT_SELECT_ACTION_ID:
             # Slack Code's agent picker records each change decision as its own.
             agent_picker.audit_refused_pick(payload, "unauthorized user")
+        elif action_id == approval_picker.APPROVAL_SELECT_ACTION_ID:
+            approval_picker.audit_refused_pick(payload, "unauthorized user")
         if _orch and _orch.slack and channel and user_id:
             try:
                 await _orch.slack.post_ephemeral(

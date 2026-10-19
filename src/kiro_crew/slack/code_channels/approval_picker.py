@@ -65,15 +65,22 @@ _BY_WORD = {word: mode for mode, _, word in MODES}
 PICKER_LABEL = "*Approval mode*"
 PICKER_PLACEHOLDER = "Choose a mode"
 SET_NOTE = "Approval mode set to *{label}* by <@{user}>."
-UNKNOWN_TEXT = "❌ `{word}` isn't a mode. Use `/{command} trust ask`, `reads` or `all`."
+UNKNOWN_TEXT = (
+    "❌ `{word}` isn't a mode. Use `/{command} trust ask` (Ask), `reads` (Trust reads) "
+    "or `all` (Trust)."
+)
+YOLO_OFF_TEXT = " The YOLO grant, which covered every session, is off too."
+YOLO_ON_NOTE = "⚡ YOLO is on: every session's tools run without asking, whatever this says."
 CURRENT_TEXT = (
-    "This channel is on *{label}*. Change it with `/{command} trust ask`, `reads` or `all`."
+    "This channel is on *{label}*. Change it with `/{command} trust ask` (Ask), "
+    "`reads` (Trust reads) or `all` (Trust)."
 )
 
 TRUST_CALL_LABEL = "Trust this channel"
 TRUST_WARNING = (
     "⚠️ <@{user}> put this channel on *Trust*: the agent's tools run without asking, "
-    "and workers it starts inherit that. `/{command} trust ask` turns it off."
+    "and workers it starts inherit that. Set *Approval mode* in the first message back to "
+    "Ask, or run `/{command} trust ask`, to turn it off."
 )
 FAILED_TEXT = "⚠️ Could not change the approval mode: {reason}"
 NO_SESSION_TEXT = "This channel's session isn't open right now. Try again in a moment."
@@ -124,8 +131,37 @@ def _yolo_active() -> bool:
         return True
 
 
-def _command() -> str:
-    """The app's slash command (``slack.command``), as the person types it."""
+def _yolo_on() -> bool:
+    """Whether YOLO is on, for display: False when it cannot be read."""
+    try:
+        from kiro_crew.dashboard.chat_handlers import safety_override
+
+        return bool(safety_override().is_active())
+    except Exception:
+        return False
+
+
+def yolo_note() -> str:
+    """The kickoff's YOLO line ("" while YOLO is off)."""
+    return YOLO_ON_NOTE if _yolo_on() else ""
+
+
+def audit_refused_pick(payload: dict[str, Any], reason: str) -> None:
+    """This module's row for a select pick refused before it reached it."""
+    channel, user, msg_ts, _team, action = _ids(payload)
+    mode = str(((action.get("selected_option") or {}).get("value")) or "")
+    _audit(
+        "denied", f"channel={channel} user={user} mode={mode} via=select message={msg_ts}", reason
+    )
+
+
+def _command(orch: Any = None) -> str:
+    """The app's slash command, as the person types it: the one the router
+    matched (``orch.slack_command``) when an orchestrator is in hand, else
+    ``slack.command``."""
+    routed = str(getattr(orch, "slack_command", "") or "").strip().lstrip("/")
+    if routed:
+        return routed
     try:
         name = str(getattr(getattr(live_config(), "slack", None), "command", "") or "")
     except Exception:
@@ -255,6 +291,7 @@ async def set_channel_mode(
     if slot is None:
         _audit("error", resources, "session unavailable")
         return ModeResult("unavailable", NO_SESSION_TEXT)
+    yolo_before = _yolo_on()
     async with _lock(channel):
         if still_live is not None and not still_live():
             _audit("denied", resources, STALE_REASON)
@@ -277,7 +314,8 @@ async def set_channel_mode(
     if mode == "trust":
         await _post_channel(channel, TRUST_WARNING.format(user=user, command=_command()))
     await _refresh(binding, note=SET_NOTE.format(label=label(mode), user=user))
-    return ModeResult("set", f"✅ This channel is now on *{label(mode)}*.")
+    ended = YOLO_OFF_TEXT if yolo_before and not _yolo_on() else ""
+    return ModeResult("set", f"✅ This channel is now on *{label(mode)}*.{ended}")
 
 
 async def _post_channel(channel: str, text: str) -> None:
@@ -458,7 +496,7 @@ async def handle_command(
     respond: Callable[[str], Awaitable[None]],
 ) -> None:
     """``/kirocrew trust [<ask|reads|all>]`` in an authorized code channel."""
-    command = _command()
+    command = _command(orch)
     word = arg.strip().lower()
     if not word:
         slot = bound_slot(surface.dashboard_state(), binding)

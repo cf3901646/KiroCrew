@@ -171,6 +171,8 @@ def test_the_owner_sets_a_mode_from_the_select(chan: Any, mode: str) -> None:
     assert any(f"<@{OWNER}>" in str(b) for b in blocks if b.get("type") == "context")
     warnings = [p for p in chan.slack.posts if "*Trust*" in p[1]]
     assert (len(warnings) == 1) == (mode == "trust")
+    if warnings:
+        assert "`/kirocrew trust ask`" in warnings[0][1] and "Approval mode" in warnings[0][1]
 
 
 def test_the_owner_sets_ask_back_from_the_select(chan: Any) -> None:
@@ -214,6 +216,9 @@ def test_a_non_owners_pick_is_refused_by_the_dispatcher(chan: Any, monkeypatch: 
     asyncio.run(interactions.dispatch(_pick("trust", user=STRANGER)))
     assert _mode_of(chan.slot) == "normal"
     assert chan.slack.ephemerals[-1][1] == STRANGER
+    # The picker's own decision row, beside the generic interactive one.
+    assert chan.sel.ops(OPERATION)[-1]["outcome"] == "denied"
+    assert f"user={STRANGER}" in chan.sel.ops(OPERATION)[-1]["resources"]
 
 
 # ── /kirocrew trust ───────────────────────────────────────────────────────
@@ -299,6 +304,7 @@ def test_ask_ends_a_live_yolo_grant_even_when_the_slot_reads_ask(
     assert override.ended and not override.active
     assert _changes(chan, "normal")
     assert "already" not in replies[-1]
+    assert approval_picker.YOLO_OFF_TEXT.strip() in replies[-1]
 
 
 def test_the_select_ends_a_live_yolo_grant_too(chan: Any, monkeypatch: Any) -> None:
@@ -312,3 +318,19 @@ def test_an_unreadable_override_never_reads_as_unchanged(chan: Any, monkeypatch:
     monkeypatch.setattr(approval_picker, "_yolo_active", lambda: True)
     _run_slash(chan, "trust ask")
     assert _changes(chan, "normal")  # went through apply_approval_mode
+
+
+def test_the_kickoff_says_when_yolo_is_on(monkeypatch: Any) -> None:
+    override = _Override(False)
+    monkeypatch.setattr(chat_handlers, "safety_override", lambda: override)
+    blocks = agent_picker.kickoff_blocks("hi", ["a"], "a", approval_mode="normal")
+    assert approval_picker.YOLO_ON_NOTE in str(blocks)
+    override.active = False
+    assert approval_picker.YOLO_ON_NOTE not in str(
+        agent_picker.kickoff_blocks("hi", ["a"], "a", approval_mode="normal")
+    )
+
+
+def test_the_reply_does_not_claim_yolo_ended_when_it_was_off(chan: Any) -> None:
+    replies = _run_slash(chan, "trust all")
+    assert approval_picker.YOLO_OFF_TEXT.strip() not in replies[-1]
