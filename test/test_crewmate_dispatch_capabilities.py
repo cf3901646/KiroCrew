@@ -153,3 +153,33 @@ def test_an_ordinary_report_says_nothing_about_capabilities():
         [{"title": "triage", "key": "chat-9", "turns": 1, "reply": "All tests pass."}]
     )
     assert "missing capability" not in prompt.casefold()
+
+
+#: Round-5 Cove's worker, which reported the gap in prose instead of the prefix line.
+_COVE_REPORT = (
+    "Step 1 done: CHANGELOG.md matches the closed issues.\n"
+    "Step 2: blocked on issuetracker (no issuetracker tool)\n"
+    "Step 3 done."
+)
+
+
+def test_a_step_blocked_for_a_named_tool_carries_the_gap_note_too():
+    gap = missing_capability(_COVE_REPORT)
+    assert gap.startswith("the issuetracker tool")
+    prompt = report_prompt(
+        [{"title": "triage", "key": "chat-9", "turns": 1, "reply": _COVE_REPORT}]
+    )
+    assert "find_capabilities" in prompt
+    assert "the issuetracker tool" in prompt
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "Done. I used no extra tool for this.",  # names no blocked step
+        "Blocked on a review from the user.",  # blocked, but not for a tool
+        "There is no issuetracker tool in this repo's docs; step 2 done anyway.",
+    ],
+)
+def test_prose_without_a_blocked_step_for_a_tool_adds_no_gap_note(reply):
+    assert missing_capability(reply) == ""

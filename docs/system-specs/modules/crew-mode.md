@@ -3601,7 +3601,12 @@ or skill it does not have is reported, not worked around, on a first line
 The `[Worker report]` the crewmate's thread receives finds that line in the
 excerpt (`mate_thread_wakes.missing_capability`, Markdown emphasis and quote
 marks tolerated, bounded) and adds one line naming the gap and pointing at
-`find_capabilities` and `request_capabilities`. The conductor also learns what
+`find_capabilities` and `request_capabilities`. A worker that states the gap in
+prose instead gets the same line when one line of its reply says a step is
+blocked (or could not be done) and names the tool or server it lacked ("blocked
+on issuetracker (no issuetracker tool)"; `mate_thread_wakes._blocked_for_a_tool`);
+a blocked step that names no tool, or a tool named with no blocked step, adds
+nothing. The conductor also learns what
 its worker can use when it hands work off: the result of its own
 `session_create` and `session_send` to a worker of the same crewmate (both
 attested execution records: the caller a conductor, the target a

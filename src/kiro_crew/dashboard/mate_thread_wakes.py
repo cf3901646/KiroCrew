@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from kiro_crew import crewmate_prompts
@@ -81,6 +82,35 @@ def missing_capability(text: str) -> str:
         if bare.casefold().startswith(prefix):
             what = bare[len(prefix) :].strip(_LINE_DECORATION)
             return " ".join(what.split())[:_MISSING_CAPABILITY_CHARS] or "(not named)"
+    return _blocked_for_a_tool(text)
+
+
+#: A step the worker says it could not do...
+_BLOCKED = re.compile(r"\b(?:blocked|cannot|can't|can not|unable|could not|couldn't)\b", re.I)
+#: ...for want of a named tool or server: "no issuetracker tool", "without the jira server".
+_LACKED_TOOL = re.compile(
+    r"\b(?:no|without|lacks?|lacking|missing)\s+(?:an?\s+|the\s+)?([A-Za-z][\w.-]{1,40})\s+"
+    r"(?:tool|tools|server|mcp server)\b",
+    re.I,
+)
+
+
+def _blocked_for_a_tool(text: str) -> str:
+    """The gap a worker states in prose instead of the ``MISSING CAPABILITY:`` line.
+
+    Round-5 Cove: "Step 2: blocked on issuetracker (no issuetracker tool)". Narrow on
+    purpose: a line that says a step is blocked (or could not be done) AND names the
+    tool or server it lacked. ``"the issuetracker tool"`` for that line, else ``""``.
+    """
+    for line in text.splitlines():
+        if not _BLOCKED.search(line):
+            continue
+        lacked = _LACKED_TOOL.search(line)
+        if lacked:
+            noun = lacked.group(0).split()[-1].lower()
+            return f"the {lacked.group(1)} {noun} (in the worker's words: {line.strip(_LINE_DECORATION)})"[
+                :_MISSING_CAPABILITY_CHARS
+            ]
     return ""
 
 
