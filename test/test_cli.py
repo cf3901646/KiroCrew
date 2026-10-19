@@ -2001,6 +2001,32 @@ class TestStatus:
         out = capsys.readouterr().out
         assert "not running" in out
 
+    def test_status_timeout_reports_busy_not_down(self, capsys):
+        """A URLError-wrapped timeout reads as busy through the shared classifier."""
+        from kiro_crew.cli_server import _status
+
+        with patch(
+            "kiro_crew.cli_server.loopback_urlopen",
+            side_effect=urllib.error.URLError(TimeoutError("timed out")),
+        ):
+            _status(self._make_args())
+        out = capsys.readouterr().out
+        assert "busy" in out
+        assert "not running" not in out
+
+    def test_status_read_timeout_reports_busy_not_down(self, capsys):
+        """A bare TimeoutError (socket read timeout) also reads as busy."""
+        from kiro_crew.cli_server import _status
+
+        with patch(
+            "kiro_crew.cli_server.loopback_urlopen",
+            side_effect=TimeoutError("timed out"),
+        ):
+            _status(self._make_args())
+        out = capsys.readouterr().out
+        assert "busy" in out
+        assert "not running" not in out
+
     def test_status_success(self, capsys):
         """200 OK should display stats."""
         from kiro_crew.cli_server import _status
@@ -6491,6 +6517,44 @@ class TestSpawnCliAuth:
         assert excinfo.value.code == 1
         out = capsys.readouterr().out
         assert "Error" in out
+        assert "gateway not running" not in out
+
+    def test_spawn_list_timeout_reports_busy(self, monkeypatch, capsys):
+        """A read timeout on spawn list reads as busy, not 'not running'."""
+        monkeypatch.setattr("kiro_crew.cli_commands.read_local_secret", lambda _port, **_kw: "s")
+        monkeypatch.setattr(
+            "kiro_crew.cli_commands.loopback_urlopen",
+            lambda *_a, **_k: (_ for _ in ()).throw(TimeoutError("timed out")),
+        )
+
+        from kiro_crew.cli_commands import _spawn
+
+        with pytest.raises(SystemExit) as excinfo:
+            _spawn(argparse.Namespace(spawn_action="list", port=5476))
+        assert excinfo.value.code == 1
+        out = capsys.readouterr().out
+        assert "busy" in out
+        assert "gateway not running" not in out
+
+    def test_spawn_run_timeout_reports_busy_and_points_at_list(self, monkeypatch, capsys):
+        """A spawn-run timeout reports busy and points at `spawn list`, not a blind re-run."""
+        monkeypatch.setattr("kiro_crew.cli_commands.read_local_secret", lambda _port, **_kw: "s")
+        monkeypatch.setattr(
+            "kiro_crew.cli_commands.loopback_urlopen",
+            lambda *_a, **_k: (_ for _ in ()).throw(
+                urllib.error.URLError(TimeoutError("timed out"))
+            ),
+        )
+
+        from kiro_crew.cli_commands import _spawn_run
+
+        args = argparse.Namespace(task="do thing", fire_and_forget=True, port=5476)
+        with pytest.raises(SystemExit) as excinfo:
+            _spawn_run(args, "http://localhost:5476")
+        assert excinfo.value.code == 1
+        out = capsys.readouterr().out
+        assert "busy" in out
+        assert "spawn list" in out
         assert "gateway not running" not in out
 
     def _list_rows(self, monkeypatch, capsys, payload: dict) -> str:
