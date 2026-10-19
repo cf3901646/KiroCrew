@@ -63,12 +63,12 @@ def _servers(value: Any) -> dict[str, Any]:
 
 def worker_spec(member: str) -> dict[str, Any]:
     """The spec a worker session of *member* would run on. Blocking."""
-    from kiro_crew.acp import kas_agents as kas_agents_mod
+    from kiro_crew.agent_sdk import agent_specs
     from kiro_crew.config import paths as paths_mod
 
     try:
-        base = kas_agents_mod.load_agent_spec(paths_mod.kiro_agents_dir(), MATE_WORKER_AGENT)
-    except kas_agents_mod.KasAgentTranslationError:
+        base = agent_specs.load_agent_spec(paths_mod.kiro_agents_dir(), MATE_WORKER_AGENT)
+    except agent_specs.AgentSpecUnreadable:
         logger.warning("the worker spec is unreadable; the catalog reads an empty worker")
         base = {"name": MATE_WORKER_AGENT, "tools": [], "mcpServers": {}}
     # The catalog reads tools and skills, never the prompt.

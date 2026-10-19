@@ -419,7 +419,7 @@ def member_has_session_tools(member: str) -> bool:
     or without the tools. Blocking IO.
     """
     try:
-        from kiro_crew.acp.session_mcp import session_mcp_server_is_disabled
+        from kiro_crew.agent_sdk.agent_specs import session_mcp_server_is_disabled
         from kiro_crew.config.loader import KiroCrewConfig
         from kiro_crew.context import _member_dispatch_held
         from kiro_crew.members import MEMBER_DISPATCH_SERVER

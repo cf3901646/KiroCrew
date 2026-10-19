@@ -66,15 +66,15 @@ import json
 import logging
 from typing import Any
 
-from kiro_crew.acp import kas_agents as kas_agents_mod
-from kiro_crew.acp.mate_config import (
+from kiro_crew.agent_sdk import agent_specs
+from kiro_crew.config import paths as paths_mod
+from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.mate_config import (
     MateConfigError,
     _resolved_source_spec,
     has_mate_config,
     write_mate_spec,
 )
-from kiro_crew.config import paths as paths_mod
-from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.mate_worker import (
     MATE_CONDUCTOR_AGENT,
     MATE_WORKER_AGENT,
@@ -505,8 +505,8 @@ def _governed_source(source_agent: str) -> dict[str, Any]:
 
     spec = _resolved_source_spec(source_agent)
     try:
-        raw = kas_agents_mod.load_agent_spec(paths_mod.kiro_agents_dir(), source_agent)
-    except kas_agents_mod.KasAgentTranslationError as exc:
+        raw = agent_specs.load_agent_spec(paths_mod.kiro_agents_dir(), source_agent)
+    except agent_specs.AgentSpecUnreadable as exc:
         raise MateConfigError(str(exc)) from exc
     raw_prompt = raw.get("prompt")
     if not (isinstance(raw_prompt, str) and raw_prompt.strip()):
@@ -520,9 +520,9 @@ def _governed_source(source_agent: str) -> dict[str, Any]:
 def _worker_base() -> dict[str, Any]:
     """The worker's source base with its prompt as literal text."""
     agents_dir = paths_mod.kiro_agents_dir()
-    base = kas_agents_mod.load_agent_spec(agents_dir, MATE_WORKER_AGENT)
+    base = agent_specs.load_agent_spec(agents_dir, MATE_WORKER_AGENT)
     base = copy_json_document(base)
-    base["prompt"] = kas_agents_mod.resolve_prompt(
+    base["prompt"] = agent_specs.resolve_prompt(
         base, agent_id=MATE_WORKER_AGENT, agents_dir=agents_dir
     )
     return base
@@ -535,10 +535,10 @@ def _write_file(name: str, spec: dict[str, Any]) -> None:
 def _read_back(name: str) -> dict[str, Any]:
     """The written file as the worker merge reads it (``resolve_worker_spec``)."""
     mates_dir = paths_mod.mate_agents_dir()
-    spec = kas_agents_mod.load_agent_spec(mates_dir, name)
+    spec = agent_specs.load_agent_spec(mates_dir, name)
     prompt = spec.get("prompt")
     if isinstance(prompt, str) and prompt.strip():
-        spec["prompt"] = kas_agents_mod.resolve_prompt(spec, agent_id=name, agents_dir=mates_dir)
+        spec["prompt"] = agent_specs.resolve_prompt(spec, agent_id=name, agents_dir=mates_dir)
     else:
         spec["prompt"] = ""
     return spec
@@ -640,7 +640,7 @@ def migrate_existing_crewmates(
         try:
             _write_file(name, planned)
             reason = dry_run(base, old, _read_back(name))
-        except (MateConfigError, kas_agents_mod.KasAgentTranslationError) as exc:
+        except (MateConfigError, agent_specs.AgentSpecUnreadable) as exc:
             report.copy_failed[name] = str(exc)
             logger.warning("crewmate migration: %s's file was not written: %s", label, exc)
             continue

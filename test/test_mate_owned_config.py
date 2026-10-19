@@ -28,7 +28,7 @@ import kiro_crew.agent as agent_mod
 import kiro_crew.config.paths as paths_mod
 from kiro_crew.acp.harness.kas import resolve_projected_spec
 from kiro_crew.acp.kas_agents import build_kas_custom_agents, expand_kiro_cli_tool_names
-from kiro_crew.acp.mate_config import (
+from kiro_crew.mate_config import (
     has_mate_config,
     mate_config_path,
     write_mate_config,
@@ -268,7 +268,7 @@ def test_mate_tools_grant_skips_when_no_owned_file_exists(layout, monkeypatch):
 
 
 def test_write_mate_config_refuses_an_absent_source(layout):
-    from kiro_crew.acp.mate_config import MateConfigError
+    from kiro_crew.mate_config import MateConfigError
 
     _user, _mates, _checkout = layout
     with pytest.raises(MateConfigError):

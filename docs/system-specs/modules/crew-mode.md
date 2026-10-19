@@ -3244,7 +3244,10 @@ A crewmate whose binding owns its own file (`kiro_agent` names a spec found in
 `mate_worker.is_mate_owned_agent`, an in-memory set
 `refresh_materialized_agents` publishes beside the agent snapshot) is two
 source-defined agents plus that file. Every creation path writes the file
-through one writer, `acp.mate_config.write_mate_spec`, which adds it to that
+through one writer, `mate_config.write_mate_spec` (`src/kiro_crew/mate_config.py`,
+application code: it and every crewmate module read agent specs and the MCP
+switch-off through `agent_sdk.agent_specs`, never `kiro_crew.acp`, so the
+agent-SDK boundary gate holds none of them), which adds it to that
 set in the same call (`loader.publish_mate_agents`): the create route and the
 `agent create` command share the copy-and-repoint `mate_config.adopt_own_file`,
 and the startup migration (which also gives the first crewmate its file) writes

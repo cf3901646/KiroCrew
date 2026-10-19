@@ -166,7 +166,7 @@ def is_mate_owned_agent(kiro_agent: str) -> bool:
 
     A lookup on the snapshot :func:`kiro_crew.config.loader.refresh_materialized_agents`
     publishes; the crewmate writers add their file to it as they write it
-    (``acp.mate_config.write_mate_spec``). A name the snapshot does not know at
+    (``mate_config.write_mate_spec``). A name the snapshot does not know at
     all is rescanned first when called off the loop; on the loop a rescan is
     scheduled and the answer is False for that call, so the binding runs as named.
     """
@@ -388,7 +388,7 @@ def mate_file_for_member(member_id: str, config: Any = None) -> str:
     of the same name is someone's custom agent, never this crewmate's additions).
     Blocking file I/O; callers run it off the event loop.
     """
-    from kiro_crew.acp import kas_agents as kas_agents_mod
+    from kiro_crew.agent_sdk import agent_specs
     from kiro_crew.config import paths as paths_mod
     from kiro_crew.execution_context import member_config_for_id
 
@@ -403,9 +403,9 @@ def mate_file_for_member(member_id: str, config: Any = None) -> str:
     name = getattr(binding, "kiro_agent", "") or ""
     if not name:
         return ""
-    if not kas_agents_mod.agent_spec_absent(paths_mod.kiro_agents_dir(), name):
+    if not agent_specs.agent_spec_absent(paths_mod.kiro_agents_dir(), name):
         return ""
-    if kas_agents_mod.agent_spec_absent(paths_mod.mate_agents_dir(), name):
+    if agent_specs.agent_spec_absent(paths_mod.mate_agents_dir(), name):
         return ""
     return name
 
@@ -464,22 +464,22 @@ def resolve_worker_spec(base: dict[str, Any], member_id: str | None) -> dict[str
     name = mate_file_for_member(member_id)
     if not name:
         return merge_worker_spec(base, _with_global_tool_offs(base, {}))
-    from kiro_crew.acp import kas_agents as kas_agents_mod
+    from kiro_crew.agent_sdk import agent_specs
     from kiro_crew.config import paths as paths_mod
 
     mate_dir = paths_mod.mate_agents_dir()
     try:
-        mate_spec = kas_agents_mod.load_agent_spec(mate_dir, name)
+        mate_spec = agent_specs.load_agent_spec(mate_dir, name)
         prompt = mate_spec.get("prompt")
         # Resolved only when the file names a prompt: ``resolve_prompt`` answers
         # a prompt-less spec with the KAS fallback text, which is not an addition.
         if isinstance(prompt, str) and prompt.strip():
-            mate_spec["prompt"] = kas_agents_mod.resolve_prompt(
+            mate_spec["prompt"] = agent_specs.resolve_prompt(
                 mate_spec, agent_id=name, agents_dir=mate_dir
             )
         else:
             mate_spec["prompt"] = ""
-    except kas_agents_mod.KasAgentTranslationError:
+    except agent_specs.AgentSpecUnreadable:
         logger.warning(
             "crewmate %r: its worker additions file %r is unreadable; the worker runs "
             "its source base only",

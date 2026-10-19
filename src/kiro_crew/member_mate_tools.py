@@ -237,9 +237,9 @@ def _grant(member: str, catalog: Callable[[str], dict[str, str]]) -> str:
     ``catalog`` is unused, kept in the signature so callers and tests are
     unchanged.
     """
-    from kiro_crew.acp.mate_config import has_mate_config
     from kiro_crew.agent_files import AGENT_FILENAME
     from kiro_crew.config.loader import KiroCrewConfig, _invalidate_config_cache
+    from kiro_crew.mate_config import has_mate_config
 
     _invalidate_config_cache()
     binding = KiroCrewConfig.load().agents.get(member)

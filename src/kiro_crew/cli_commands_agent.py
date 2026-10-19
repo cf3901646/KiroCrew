@@ -240,7 +240,7 @@ def _handle_agent(args: argparse.Namespace) -> None:
             print(f"Model: {created.model}")
         # The same eager copy the create route runs, so a crewmate made here
         # chats on the conductor and hands its work to its worker.
-        from kiro_crew.acp.mate_config import MateConfigError, adopt_own_file
+        from kiro_crew.mate_config import MateConfigError, adopt_own_file
 
         try:
             adopt_own_file(args.name)

@@ -72,7 +72,7 @@ async def _eager_copy_mate_config(name: str) -> str:
     ``_drained_to_thread`` resolve there -- this helper is ALSO re-exported into
     that module (the namespace-injection contract), or it NameErrors live.
     """
-    from kiro_crew.acp.mate_config import MateConfigError, adopt_own_file
+    from kiro_crew.mate_config import MateConfigError, adopt_own_file
 
     try:
         async with _get_config_lock():

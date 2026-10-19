@@ -77,7 +77,7 @@ async def test_creating_from_a_template_without_the_mate_server_writes_no_overri
 
 
 def test_a_template_carrying_the_bare_override_is_copied_without_it(home):
-    from kiro_crew.acp.mate_config import write_mate_config
+    from kiro_crew.mate_config import write_mate_config
 
     (home / "agents" / "with-switch.json").write_text(
         json.dumps({**BRIAR, "name": "with-switch"}), encoding="utf-8"

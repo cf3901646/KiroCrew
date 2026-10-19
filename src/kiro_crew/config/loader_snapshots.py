@@ -657,7 +657,7 @@ def publish_materialized_agents(names: Iterable[str]) -> None:
 def publish_mate_agents(names: Iterable[str]) -> None:
     """Record *names* as crewmate-owned files the moment they are written.
 
-    The crewmate writers (``acp.mate_config.write_mate_spec``) call this right
+    The crewmate writers (``mate_config.write_mate_spec``) call this right
     after the file lands, so the next chat of that crewmate runs on the
     conductor (:func:`kiro_crew.mate_worker.member_chat_agent`) instead of
     waiting for the next full scan. A name the user level already declares is

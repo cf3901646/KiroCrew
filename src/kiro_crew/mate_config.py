@@ -27,7 +27,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from kiro_crew.acp import kas_agents as kas_agents_mod
+from kiro_crew.agent_sdk import agent_specs
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config import paths as paths_mod
 from kiro_crew.user_json import copy_json_document
@@ -53,7 +53,7 @@ def _resolved_source_spec(source_agent: str) -> dict[str, Any]:
     """Read *source_agent*'s user-level spec with ``prompt`` inlined as literal text.
 
     The source is a user-level custom agent (``~/.kiro/agents/``), read once
-    through the hardened reader :func:`kas_agents.load_agent_spec`. Its ``prompt``
+    through the hardened reader :func:`kiro_crew.agent_sdk.agent_specs.load_agent_spec`. Its ``prompt``
     is resolved against that same directory, so a ``file://`` reference becomes
     the literal prompt text and the crewmate file carries no path back into the
     source. A prompt-less source resolves to the KAS fallback -- the same text a
@@ -62,8 +62,8 @@ def _resolved_source_spec(source_agent: str) -> dict[str, Any]:
     """
     agents_dir = paths_mod.kiro_agents_dir()
     try:
-        spec = kas_agents_mod.load_agent_spec(agents_dir, source_agent)
-    except kas_agents_mod.KasAgentTranslationError as exc:
+        spec = agent_specs.load_agent_spec(agents_dir, source_agent)
+    except agent_specs.AgentSpecUnreadable as exc:
         raise MateConfigError(
             f"source agent {source_agent!r} has no readable spec to copy: {exc}"
         ) from exc
@@ -71,8 +71,8 @@ def _resolved_source_spec(source_agent: str) -> dict[str, Any]:
     # resolve + reassign below mutates, so never risk touching a memoised parse.
     spec = copy_json_document(spec)
     try:
-        prompt = kas_agents_mod.resolve_prompt(spec, agent_id=source_agent, agents_dir=agents_dir)
-    except kas_agents_mod.KasAgentTranslationError as exc:
+        prompt = agent_specs.resolve_prompt(spec, agent_id=source_agent, agents_dir=agents_dir)
+    except agent_specs.AgentSpecUnreadable as exc:
         raise MateConfigError(
             f"source agent {source_agent!r} prompt could not be inlined: {exc}"
         ) from exc

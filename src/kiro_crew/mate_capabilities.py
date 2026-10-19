@@ -35,10 +35,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from kiro_crew import agent_state
-from kiro_crew.acp.mate_config import has_mate_config, mate_config_path
 from kiro_crew.atomic_write import atomic_write
 from kiro_crew.config.loader import KiroCrewConfig
 from kiro_crew.config.paths import mate_agents_dir
+from kiro_crew.mate_config import has_mate_config, mate_config_path
 
 logger = logging.getLogger(__name__)
 

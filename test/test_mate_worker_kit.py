@@ -213,7 +213,7 @@ async def test_create_records_a_non_default_template_as_the_kit(monkeypatch, sou
     import contextlib
     from types import SimpleNamespace
 
-    from kiro_crew.acp import mate_config
+    from kiro_crew import mate_config
     from kiro_crew.dashboard.handlers import agents as handlers
 
     binding = SimpleNamespace(kiro_agent=source, memory_store="member-pixel")
