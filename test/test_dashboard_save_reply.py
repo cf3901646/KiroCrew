@@ -124,3 +124,15 @@ def test_the_reply_says_the_page_ran_over_a_synthetic_copy():
     assert "your crewmate's data and raised" not in failed
     # A verdict that does not say what it ran over does not claim a copy.
     assert "synthetic" not in plain
+def test_dashboard_save_describes_a_page_written_as_view_html() -> None:
+    """A crewmate's page is view.html only: the tool must not teach a block layout."""
+    from kiro_crew import mcp_panel
+
+    (tool,) = [t for t in mcp_panel._list_tools() if t["name"] == "dashboard_save"]
+    view = tool["inputSchema"]["properties"]["view"]["description"]
+    assert '{"html": "..."}' in view and "data-dashboard-field" in view
+    assert "theme variables" in view
+    text = (tool["description"] + view).lower()
+    assert "blocks" not in text and "block type" not in text and "block catalog" not in text
+
+
