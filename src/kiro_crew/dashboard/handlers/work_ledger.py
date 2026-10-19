@@ -283,7 +283,13 @@ async def _caller_key(
             "restricted_session",
             "The work ledger is not available in this session mode.",
         )
-    why, caller_slot, admission = _caller_admission(request, sk)
+    # Off the loop, right before the synchronous judgement: the code-channel store
+    # and the dispatch switch's config-path reading (no-ops once loaded / while
+    # code channels are off). Nothing else is awaited between this and the gate.
+    await session_control.load_code_channel_lineage()
+    why, caller_slot, admission, via_code_channel = caller_admission_with_route(
+        request.app["state"], sk
+    )
     if why:
         # Containment for channel agents, held HERE rather than only in
         # ``channel.CHANNEL_AGENT_BLOCKED_TOOLS``. That list is matched against a
@@ -324,16 +330,28 @@ async def _caller_key(
     # publishes withholds it -- see ``session_control.record_audience_admission``.
     if admission is not None:
         session_control.record_audience_admission(caller_slot, admission)
+    if via_code_channel:
+        # Every route below answers this caller with the published-fields
+        # projection and nothing else: what it reads becomes a reply posted into
+        # the code channel. See :func:`_code_channel_caller`.
+        request[_CODE_CHANNEL_CALLER] = True
     return session_ledger.ledger_key(sk), None
 
 
-def _caller_admission(request: web.Request, sk: str) -> tuple[str, Any, dict[str, Any] | None]:
-    """:func:`caller_admission` over a request. See it for the judgement."""
-    return caller_admission(request.app["state"], sk)
+#: Request key set by :func:`_caller_key` when the caller was admitted through the
+#: code-channel dispatch exemption.
+_CODE_CHANNEL_CALLER = "work_ledger.code_channel_caller"
 
 
-def caller_admission(state: DashboardState, sk: str) -> tuple[str, Any, dict[str, Any] | None]:
-    """The entry gate's one judgement of *sk*: ``(why, slot, admission)``.
+def _code_channel_caller(request: web.Request) -> bool:
+    """Whether this request's caller is a code channel's conductor (see above)."""
+    return request.get(_CODE_CHANNEL_CALLER) is True
+
+
+def caller_admission_with_route(
+    state: DashboardState, sk: str
+) -> tuple[str, Any, dict[str, Any] | None, bool]:
+    """The entry gate's one judgement of *sk*: ``(why, slot, admission, via_code_channel)``.
 
     ``why`` is ``""`` when the caller may reach the ledger, else the refusal reason
     :func:`_contained_channel_caller` would name; ``slot`` is the caller's own live
@@ -360,22 +378,37 @@ def caller_admission(state: DashboardState, sk: str) -> tuple[str, Any, dict[str
     delivers ledger state into a session's own turn has to pass this same gate and
     holds no request. One judgement, one implementation: a second copy of a
     containment test is how one of the two drifts open.
+
+    ``via_code_channel`` is True when the caller was admitted through the
+    code-channel dispatch exemption (``session_control.judge_code_channel``)
+    rather than as unmirrored or as the owner's DM: a Slack code channel's own
+    session, which every route then answers with the published-fields projection
+    only (``session_control.published_item_fields``).
     """
     slot_key = session_control.caller_slot_key(state, sk)
     slot = state.get_slot(slot_key) if slot_key else None
     if slot is None:
-        return contained_channel_caller(state, sk), None, None
+        return contained_channel_caller(state, sk), None, None, False
     try:
         verdict = session_control.judge_owner_dm(state, slot)
     except Exception:  # pragma: no cover - the predicate fails closed itself
         logger.debug("owner-DM check failed for %s", sk, exc_info=True)
-        return "the owner-DM check could not be completed", slot, None
+        return "the owner-DM check could not be completed", slot, None, False
     reaches = (
         is_channel_session_key(sk)
         or bool(session_control._channel_link_of(slot))
         or verdict.mirrored
     )
-    return (verdict.refusal if reaches else ""), slot, verdict.admission
+    if not reaches or not verdict.refusal:
+        return (verdict.refusal if reaches else ""), slot, verdict.admission, False
+    if not is_channel_session_key(sk) and not session_control._channel_link_of(slot):
+        channel = session_control.judge_code_channel(
+            state, slot, operation=session_control.LEDGER_OPERATION
+        )
+        if session_control.admits(channel):
+            return "", slot, channel.admission, True
+        return verdict.refusal + session_control.withheld_clause(channel), slot, None, False
+    return verdict.refusal, slot, verdict.admission, False
 
 
 def _contained_channel_caller(request: web.Request, sk: str) -> str:
@@ -403,7 +436,7 @@ def contained_channel_caller(state: DashboardState, sk: str) -> str:
     Re-checked after every read the routes await across, because the exemption
     rests on live state -- a mirror retargeted at a thread while the ledger was
     being read widens the audience exactly as a mirror gained by a dashboard
-    session does. The ENTRY gate judges through :func:`_caller_admission` instead,
+    session does. The ENTRY gate judges through :func:`caller_admission_with_route` instead,
     which takes the same predicate's verdict once and records the row it judged;
     this reason-only form is what that gate falls back to for a key no open slot
     answers to, where there is nothing to record.
@@ -411,10 +444,25 @@ def contained_channel_caller(state: DashboardState, sk: str) -> str:
     if not (is_channel_session_key(sk) or reaches_a_channel(state, sk)):
         return ""
     try:
-        return session_control.session_owner_dm_refusal(state, sk)
+        why = session_control.session_owner_dm_refusal(state, sk)
     except Exception:  # pragma: no cover - the predicate fails closed itself
         logger.debug("owner-DM check failed for %s", sk, exc_info=True)
         return "the owner-DM check could not be completed"
+    if not why or is_channel_session_key(sk):
+        return why
+    # A code channel's own session, re-judged on the live state after the read:
+    # a mirror retargeted, the channel shared or the switch turned off while the
+    # ledger was being read withholds the answer exactly as an owner DM's does.
+    slot_key = session_control.caller_slot_key(state, sk)
+    slot = state.get_slot(slot_key) if slot_key else None
+    if slot is None or session_control._channel_link_of(slot):
+        return why
+    channel = session_control.judge_code_channel(
+        state, slot, operation=session_control.LEDGER_OPERATION
+    )
+    if session_control.admits(channel):
+        return ""
+    return why + session_control.withheld_clause(channel)
 
 
 def _reaches_a_channel(request: web.Request, sk: str) -> bool:
@@ -1208,6 +1256,11 @@ async def api_work_ledger_get(request: web.Request) -> web.Response:
         return bad
     assert options is not None
     compact = bool(options.get("compact", False))
+    # A code channel's conductor reads the published-fields projection alone, so
+    # there is no event tail to read for it.
+    published_only = _code_channel_caller(request)
+    if published_only:
+        compact = True
     tail = int(options.get("events", _MAX_EVENT_TAIL))
     # Under the board lock for the same reason the brief read is: a write's
     # cache commit and its record append are two steps, and a read between them
@@ -1268,6 +1321,12 @@ async def api_work_ledger_get(request: web.Request) -> web.Response:
             f"read, so it is no longer one to return it to: {why}.",
         )
     _audit(key, "work_ledger_read", "ok", resources=f"{len(rows)} item(s)")
+    if published_only:
+        return web.json_response(
+            _published_payload(
+                record, [(item, bool(row.get("stale"))) for item, row in zip(shown, rows)]
+            )
+        )
     # ``goal_items_used`` and ``cap_exceeded`` are derived, never stored: the
     # number the conductor's "items used: N of <item_cap>" line reports, and
     # whether that line has gone past its cap, both read off the same header.
@@ -1330,6 +1389,46 @@ def _row_with_flags(
     row["unpatrolled"] = item.state == "open" and not patrolled
     row["pending_overdue"] = work_ledger.is_pending_overdue(item)
     return row
+
+
+#: Why a code channel's conductor reads less than a dashboard conductor does.
+_PUBLISHED_NOTE = (
+    "This session is a Slack code channel, and what it reads is posted there, so "
+    "the ledger answers with the published fields only: the first line of the goal, "
+    "and each item's title, state, the first line of its worker's report, its "
+    "branch, its PR and CI state. Acceptance bars, decisions and event tails stay "
+    "in the dashboard."
+)
+
+
+def _published_payload(
+    record: work_ledger.ConductorRecord | None,
+    items: list[tuple[work_ledger.WorkItem, bool]],
+) -> dict[str, Any]:
+    """A ledger read (or a record reply) as a code channel's conductor may see it.
+
+    Built from ``session_control.published_item_fields`` and nothing else, so the
+    rule for what reaches a code channel lives in ONE place. The conductor header
+    keeps its counters and the goal's first line (``session_control.published_goal``).
+    """
+    conductor: dict[str, Any] = {}
+    if record is not None:
+        conductor = {
+            "round": record.round,
+            "depth": record.depth,
+            "goal_items_used": record.goal_items_used,
+            "cap_exceeded": record.cap_exceeded,
+            "goal": session_control.published_goal(record.goal),
+        }
+    return {
+        "conductor": conductor,
+        "items": [
+            session_control.published_item_fields(item, stale=stale) for item, stale in items
+        ],
+        "compact": True,
+        "published_fields_only": True,
+        "note": _PUBLISHED_NOTE,
+    }
 
 
 #: The fields a ``compact=true`` row carries: what a patrol cycle reads to decide
@@ -1666,6 +1765,10 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
             "the action's crew-log record does not fit one log line; shorten it",
         )
 
+    # The goal/create bootstrap asks whether the caller is a code channel's worker
+    # from the code-channel store's loaded snapshot; load it off the loop first.
+    await session_control.load_code_channel_lineage()
+
     async def _under_board() -> web.Response:
         # Re-checked under the lock, for the same reason the report route does.
         dirty = await _refuse_if_dirty(key, key, "work_ledger_record")
@@ -1689,7 +1792,13 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
             )
         )
         if action in ("goal", "create"):
-            bootstrapped = await _bootstrap(key)
+            bootstrapped = await _bootstrap(
+                key,
+                code_channel=_code_channel_caller(request),
+                code_channel_worker=_is_code_channel_worker(
+                    state, request.headers.get("X-Session-Key", "")
+                ),
+            )
             if isinstance(bootstrapped, web.Response):
                 return bootstrapped
         else:
@@ -1822,6 +1931,15 @@ async def api_work_ledger_record(request: web.Request) -> web.Response:
         conductor = result.get("conductor")
         if conductor is not None:
             payload["conductor"] = conductor.to_dict()
+        if _code_channel_caller(request):
+            # The reply is the conductor's next words in its code channel: the same
+            # published fields a read returns, never the stored item whole.
+            published = _published_payload(conductor or header, [(item, False)] if item else [])
+            payload.pop("item", None)
+            payload["conductor"] = published["conductor"]
+            if published["items"]:
+                payload["item"] = published["items"][0]
+            payload["published_fields_only"] = True
         return web.json_response(payload)
 
     # Shielding alone detaches this transaction when the handler is cancelled.
@@ -2030,7 +2148,22 @@ def _refuse_unowned_worker(
     return None
 
 
-async def _bootstrap(key: str) -> None | web.Response:
+def _is_code_channel_worker(state: DashboardState, sk: str) -> str:
+    """The code-channel session that created *sk*, ``""`` when none.
+
+    ``session_control.code_channel_root`` -- read from persisted facts, so it holds
+    whether or not the worker is bound yet and whether or not its conductor is
+    still open. ``session_control.LINEAGE_UNAVAILABLE`` when the code-channel
+    store could not be read, which no session can be shown not to be.
+    """
+    slot_key = session_control.caller_slot_key(state, sk)
+    slot = state.get_slot(slot_key) if slot_key else None
+    return session_control.code_channel_root(state, slot) if slot is not None else ""
+
+
+async def _bootstrap(
+    key: str, *, code_channel: bool = False, code_channel_worker: str = ""
+) -> None | web.Response:
     """Open this session's ledger if it has none, deriving depth from its parent.
 
     A session that is ITSELF bound to an item is a second-level conductor, so its
@@ -2039,8 +2172,43 @@ async def _bootstrap(key: str) -> None | web.Response:
     is how a grandchild is stopped from conducting — the refusal surfaces as
     ``depth_exceeded`` (409) at the moment the child tries to open a ledger,
     rather than later when it tries to create an item.
+
+    A Slack code channel's conductor (*code_channel*, admitted through the
+    dispatch exemption) opens its ledger at the LAST conducting level,
+    ``MAX_DEPTH - 1``: its workers may work but never conduct, and because the
+    depth is written into the ledger it holds across restarts and whatever
+    happens to the channel's session later. ``ensure_conductor`` never rewrites
+    an existing depth, and such a slot could not have opened a ledger before the
+    exemption existed.
+
+    A session a code channel's session created (*code_channel_worker*) may not
+    conduct at all, bound or not: it is refused ``depth_exceeded`` here, at the
+    first goal or create, rather than relying on a binding it may not have yet.
     """
-    depth = 0
+    if code_channel_worker == session_control.LINEAGE_UNAVAILABLE:
+        _audit(
+            key,
+            "work_ledger_record",
+            "denied",
+            resources="bootstrap",
+            error="code_channel_lineage_unavailable",
+        )
+        return _refuse_409(
+            work_ledger.CODE_DEPTH_EXCEEDED,
+            "The Slack code-channel store (slack-code-channels.json) could not be read, "
+            "so this session cannot be shown not to be a code-channel worker. Repair "
+            "the file and restart the gateway.",
+        )
+    if code_channel_worker:
+        _audit(
+            key, "work_ledger_record", "denied", resources="bootstrap", error="code_channel_worker"
+        )
+        return _refuse_409(
+            work_ledger.CODE_DEPTH_EXCEEDED,
+            "This session was dispatched from a Slack code channel, and code-channel "
+            "dispatch is one level deep: it may work and report, never conduct.",
+        )
+    depth = work_ledger.MAX_DEPTH - 1 if code_channel else 0
     parent_item: str | None = None
     binding = await asyncio.to_thread(work_ledger.read_binding, key)
     if binding is not None:
