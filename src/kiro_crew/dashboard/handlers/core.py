@@ -24,6 +24,7 @@ from aiohttp.client_exceptions import ClientConnectionResetError
 
 import kiro_crew
 import kiro_crew.config.resolution as _resolution
+import kiro_crew.config.session_environments as _session_environments
 from kiro_crew import aws_consent, beacon, platform_compat, stt
 from kiro_crew.acp_backends import selectable_backend_values, selectable_stored_backend_values
 from kiro_crew.apps.manifest import KEBAB_RE
@@ -3362,6 +3363,29 @@ _EDITABLE_CONFIG: dict[str, dict] = {
         "min": DECISION_BUCKET_MIN,
         "max": DECISION_BUCKET_MAX,
     },
+    # Session Environments holds credential-free profiles only, so the masked GET
+    # may return it. ``normalize`` is the loader's own validator, so this gate
+    # refuses what a load would drop; leaf paths update one key alone.
+    "session_environments": {
+        "type": "normalized",
+        "normalize": _session_environments.validate_session_environments,
+    },
+    "session_environments.coder_url": {
+        "type": "normalized",
+        "normalize": _session_environments.validate_coder_url,
+    },
+    "session_environments.profiles": {
+        "type": "normalized",
+        "normalize": _session_environments.validate_profiles,
+    },
+    "session_environments.default_profile": {
+        "type": "normalized",
+        "normalize": _session_environments.validate_default_profile,
+    },
+    "session_environments.stop_on_shutdown": {
+        "type": "normalized",
+        "normalize": _session_environments.validate_stop_on_shutdown,
+    },
 }
 
 # The tier-to-model map `model.route` routes a turn with. Registered from the tier
@@ -3704,6 +3728,13 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
                 return _deny("unsupported config type", f"{path_key}={value}", 500)
             validated[sub_key] = sub_val
         value = validated
+    elif spec["type"] == "normalized":
+        # A structured value: the shared normalizer raises ``ValueError`` naming
+        # the field, or returns the value to store.
+        try:
+            value = spec["normalize"](value)
+        except ValueError as exc:
+            return _deny(str(exc), path_key)
     else:
         return _deny("unsupported config type", f"{path_key}={value}", 500)
 
@@ -3854,7 +3885,18 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
                 if not isinstance(nxt, dict):
                     raise ValueError(f"config section '{part}' is not an object")
                 section = nxt
-            section[parts[-1]] = value
+            if path_key == "session_environments" and isinstance(value, dict):
+                current = section.get(parts[-1], {})
+                current = current if isinstance(current, dict) else {}
+                # An older client's omission keeps a newer saved setting (merged
+                # under the write lock); a never-saved key stays at its default.
+                merged = dict(value)
+                for optional in _session_environments.SECTION_OPTIONAL_KEYS:
+                    if optional not in merged and optional in current:
+                        merged[optional] = current[optional]
+                section[parts[-1]] = merged
+            else:
+                section[parts[-1]] = value
             # Saving the old default of an auto-adopting superseded-default row
             # (a 7200 turn limit) is an explicit choice. Ack it here, under the
             # config lock and before the write, so the reload this write triggers
@@ -3889,7 +3931,8 @@ async def api_kirocrew_config_patch(request: web.Request) -> web.Response:
             _log_sel("error", f"{path_key}=write_failed")
             return web.json_response({"error": "failed to write config file"}, status=500)
 
-    _log_sel("success", f"{path_key}={value}")
+    # A structured value is audited by path only; a whole record would bloat each line.
+    _log_sel("success", path_key if spec["type"] == "normalized" else f"{path_key}={value}")
 
     # Everything a running gateway does in response to this write lives behind
     # ``config.live.subscribe`` (the provider switch and role-model rebuild are

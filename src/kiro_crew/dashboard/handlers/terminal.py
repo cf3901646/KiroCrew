@@ -459,6 +459,63 @@ def _bash_ready_env(token: str) -> dict[str, str]:
     return env
 
 
+async def _remote_terminal_argv(
+    request: web.Request, slot_name: str
+) -> tuple[list[str] | None, str]:
+    """``(argv, "")`` for a shell in ``slot_name``'s remote workspace, else ``(None, why)``."""
+    from kiro_crew.coder.session_browse import NotRemote, remote_terminal_argv
+    from kiro_crew.dashboard.chat_utils import effective_session_key
+    from kiro_crew.session_environment import SessionEnvironmentUnavailable
+
+    state = request.app.get("state")
+    slots = getattr(state, "_slots", None) or {}
+    slot = slots.get(slot_name) if isinstance(slots, dict) else None
+    if slot is None:
+        return None, "Unknown chat for this terminal"
+    try:
+        return await remote_terminal_argv(effective_session_key(slot)), ""
+    except NotRemote:
+        return None, "This chat runs on this machine, not a remote environment"
+    except SessionEnvironmentUnavailable as exc:
+        return None, f"The remote workspace is not available: {exc}"
+
+
+async def _local_terminal_refusal(request: web.Request, slot_name: str) -> str:
+    """Why a LOCAL shell opened for chat ``slot_name`` is refused, else ``""``.
+
+    The gateway decides the chat's placement itself rather than trusting the
+    client to ask for a remote shell: a tab opened before the chat was bound,
+    or after a missed placement read, must not run on the gateway. A slot the
+    gateway does not hold has no side panel to open a shell from, so it is
+    treated like a terminal for no chat: local, as on main.
+    """
+    from kiro_crew.dashboard.chat_utils import effective_session_key
+    from kiro_crew.session_environment import (
+        SessionEnvironmentUnavailable,
+        _choices,
+        session_environments_enabled,
+    )
+
+    # Flag off: every session runs here, and the choices are never read.
+    if not session_environments_enabled():
+        return ""
+    state = request.app.get("state")
+    slots = getattr(state, "_slots", None) or {}
+    slot = slots.get(slot_name) if isinstance(slots, dict) else None
+    if slot is None:
+        return ""
+    try:
+        profile = await asyncio.to_thread(_choices().get, effective_session_key(slot))
+    except SessionEnvironmentUnavailable:
+        return "Could not read where this chat runs, so no local shell was opened"
+    if profile is not None:
+        return (
+            "This chat runs on a remote environment, so this shell would open on the"
+            " wrong machine. Close this tab and open a new terminal"
+        )
+    return ""
+
+
 async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.Response:
     """WebSocket PTY for the built-in CLI panel.
 
@@ -534,6 +591,37 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
     shell, rejected_shell, fence_shells = await asyncio.get_running_loop().run_in_executor(
         discovery_executor(), _resolve_shell_with_fence_shells, cfg,
     )
+
+    # A terminal for a chat on a REMOTE session environment is a shell in that
+    # workspace, resolved before the reservation below (it awaits). Never a local
+    # fallback: it would send the user's commands to the wrong machine.
+    remote_argv: list[str] | None = None
+    remote_slot = request.query.get("remote_slot")
+    chat_slot = request.query.get("slot")
+    remote_error = ""
+    refused = "remote_unavailable=1"
+    if isinstance(remote_slot, str) and remote_slot:
+        remote_argv, remote_error = await _remote_terminal_argv(request, remote_slot)
+    elif isinstance(chat_slot, str) and chat_slot:
+        remote_error = await _local_terminal_refusal(request, chat_slot)
+        refused = "local_refused=1"
+    if remote_error:
+        _sel().log_api_access(
+            caller=caller,
+            operation="terminal.ws.open",
+            outcome="denied",
+            source="dashboard",
+            resources=f"session={session_id},{refused}",
+        )
+        # A browser cannot read a refused handshake's body, so accept it and
+        # send a coded error the client shows instead of redialing. No PTY and
+        # no reservation exist yet.
+        refusal_ws = web.WebSocketResponse(heartbeat=30, timeout=300)
+        await refusal_ws.prepare(request)
+        await _close_terminal_ws_bounded(
+            refusal_ws, error_message=remote_error, error_code="terminal_wrong_machine"
+        )
+        return refusal_ws
 
     # A None entry reserves this session id and capacity throughout opening,
     # including asynchronous setup and any refusal response. Reject duplicate
@@ -681,6 +769,8 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                 cwd = os.path.expanduser("~")
             env = _pty_child_env({"KIROCREW_TERMINAL": "1"})
             argv = [shell, "-NoLogo"] if "powershell" in shell.lower() else [shell]
+            if remote_argv is not None:
+                argv, cwd = remote_argv, os.path.expanduser("~")
             try:
                 wp = WindowsPty(argv, cwd=cwd, env=env, cols=80, rows=24)
             except Exception as exc:
@@ -771,7 +861,12 @@ async def api_terminal_ws(request: web.Request) -> web.WebSocketResponse | web.R
                     # the same ioctl single-threaded in the exec'd child, where none of
                     # that applies -- see the module docstring of _spawn_exec_shim.py.
                     argv = [shell, "-l"]
-                    if _is_bash_shell(shell):
+                    if remote_argv is not None:
+                        # The provider CLI opens the remote login shell; the local cwd
+                        # and the local bash ready-marker do not apply to it.
+                        argv, cwd = remote_argv, os.path.expanduser("~")
+                        env.pop("SHELL", None)
+                    elif _is_bash_shell(shell):
                         token = uuid.uuid4().hex
                         ready_marker = (
                             f"\x1b]697;KiroCrewReady;{token}\x07".encode("ascii")
