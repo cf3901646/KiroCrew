@@ -266,6 +266,7 @@ class LoopStore:
         rows = payload.get("loops") or []
         try:
             records = autonudge_stop_log.stop_records(self.committed_active, rows, self.stop_notes)
+            outcomes = monitor_loop_metrics.monitor_outcomes(rows) if records else {}
             for record in records:
                 autonudge_stop_log.log_record(record)
                 autonudge_stop_log.append_record(self.path.parent, record)
@@ -277,8 +278,12 @@ class LoopStore:
                 # paths that can stop a loop cannot double-count between them.
                 # In-memory add, so it costs the commit nothing; the record's
                 # free-text reason is mapped to a closed value by the metrics
-                # module and never travels as itself.
-                monitor_loop_metrics.record_loop_stopped(record)
+                # module and never travels as itself. A monitor row's terminal
+                # outcome is passed alongside, for a provider reason code the
+                # closed set does not name.
+                monitor_loop_metrics.record_loop_stopped(
+                    record, outcomes.get(str(record.get("loop_id") or ""))
+                )
         except Exception:  # noqa: BLE001 - the store write already committed
             logger.warning("AutoNudge: could not record a loop stop", exc_info=True)
         finally:
