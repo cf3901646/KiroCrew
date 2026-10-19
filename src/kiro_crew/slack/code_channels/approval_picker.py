@@ -285,24 +285,31 @@ async def handle_trust_call(orch: Any, payload: dict[str, Any]) -> bool:
     if refusal is not None:
         await _ephemeral(channel, user, refusal)
         return True
+    # Pin the ONE call this card asks about: the channel slot's own future for
+    # the card's request id, captured before anything changes. Request ids are
+    # only unique per session, so nothing here ever looks one up state-wide.
+    request_id = str(getattr(entry, "request_id", ""))
+    futures = getattr(slot, "_approval_futures", None) or {}
+    expected = futures.get(request_id)
     outcome = await set_channel_mode(binding, "trust", user, via="approval_card")
     if outcome.result not in ("set", "unchanged"):
         await _ephemeral(channel, user, outcome.text)
         return True
-    # The Trust sweep answered the call already; an already-trusted session's
-    # card (a race) is answered here, through the dashboard's own resolver.
-    request_id = str(getattr(entry, "request_id", ""))
-    resolved = False
-    resolve = getattr(state, "resolve_approval", None)
-    if callable(resolve):
-        try:
-            resolved = bool(resolve(request_id, True))
-        except Exception:
-            logger.warning("code channel %s: trusted card not resolved", channel, exc_info=True)
+    # A change to Trust answered the call through its slot-scoped sweep. An
+    # already-trusted session's card (a race) is answered on that slot alone,
+    # and only while the slot still holds the very future the card was for.
+    resolved = expected is not None and expected.done()
+    if not resolved and expected is not None:
+        resolve = getattr(state, "resolve_slot_approval", None)
+        if callable(resolve):
+            try:
+                resolved = bool(resolve(slot, request_id, True, expected_future=expected))
+            except Exception:
+                logger.warning("code channel %s: trusted card not resolved", channel, exc_info=True)
     _audit(
         "allowed",
         f"{resources} session={entry.session_key} request={request_id} result=approved",
-        "" if resolved or outcome.result == "set" else "future_not_found",
+        "" if resolved else "future_not_found",
     )
     slack = surface.slack()
     if slack is not None:

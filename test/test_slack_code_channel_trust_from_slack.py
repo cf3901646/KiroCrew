@@ -91,11 +91,31 @@ def chan(env: Any, monkeypatch: pytest.MonkeyPatch) -> Any:  # noqa: F811
     env.state.broadcast_ws = lambda *a, **k: None
     env.resolved = []
 
+    env.global_resolves = []
+
     def resolve_approval(request_id: str, approved: bool) -> bool:
-        env.resolved.append((request_id, approved))
+        # Like the real one: the first pending future under this id, anywhere.
+        env.global_resolves.append(request_id)
+        for fut in [env.state._approval_futures.get(request_id)] + [
+            s._approval_futures.get(request_id) for s in env.state._slots.values()
+        ]:
+            if fut is not None and not fut.done():
+                fut.set_result("approved" if approved else "rejected")
+                return True
         return False
 
+    def resolve_slot_approval(
+        slot: Any, request_id: str, approved: bool, *, expected_future: Any = None
+    ) -> bool:
+        env.resolved.append((slot.key, request_id, approved))
+        fut = slot._approval_futures.get(request_id)
+        if fut is None or fut is not expected_future or fut.done():
+            return False
+        fut.set_result("approved" if approved else "rejected")
+        return True
+
     env.state.resolve_approval = resolve_approval
+    env.state.resolve_slot_approval = resolve_slot_approval
     env.mode_rows = []
     monkeypatch.setattr(
         chat_handlers,
@@ -216,6 +236,47 @@ def test_trust_this_channel_approves_the_call_and_puts_the_channel_on_trust(chan
     assert len(warnings) == 1 and warnings[0][0] == CH and warnings[0][2] is None
     assert "inherit" in warnings[0][1]
     assert chan.slack.updates[-1][1] == ts
+
+
+def test_a_trust_click_never_answers_another_sessions_call_with_the_same_id(chan: Any) -> None:
+    """Request ids are per session: the same id pending elsewhere stays pending."""
+    ts = _post_card(chan)
+    other = _slot(key="chat-9-1", channel=OTHER_CH)
+    chan.state._slots[other.key] = other
+
+    async def click() -> tuple[asyncio.Future, asyncio.Future, asyncio.Future]:
+        loop = asyncio.get_running_loop()
+        mine, theirs, background = (loop.create_future() for _ in range(3))
+        chan.slot._approval_futures[REQUEST] = mine
+        other._approval_futures[REQUEST] = theirs
+        chan.state._approval_futures[REQUEST] = background
+        assert await approval_picker.handle_trust_call(chan.orch, _click(OWNER, ts))
+        return mine, theirs, background
+
+    mine, theirs, background = asyncio.run(click())
+    assert mine.result() == "approved"
+    assert not theirs.done() and not background.done()
+    assert other._trust is False
+    assert chan.global_resolves == []
+
+
+def test_an_already_trusted_channels_card_is_answered_on_its_own_slot(chan: Any) -> None:
+    """The race: the card went out before the session was put on Trust."""
+    ts = _post_card(chan)
+    chan.slot._trust = True
+
+    async def click() -> asyncio.Future:
+        fut = asyncio.get_running_loop().create_future()
+        chan.slot._approval_futures[REQUEST] = fut
+        assert await approval_picker.handle_trust_call(chan.orch, _click(OWNER, ts))
+        return fut
+
+    fut = asyncio.run(click())
+    assert fut.result() == "approved"
+    assert chan.resolved == [(SLOT, REQUEST, True)]
+    assert not [r for r in chan.mode_rows if r["operation"] == "mode_change:trust"]
+    assert any("result=unchanged" in r["resources"] for r in _decisions(chan))
+    assert _decisions(chan)[-1]["error"] == ""
 
 
 @pytest.mark.parametrize(
