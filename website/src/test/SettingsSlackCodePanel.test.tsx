@@ -246,11 +246,13 @@ describe('Code channels card', () => {
     await hydrated()
     await waitFor(() => expect(screen.getByRole('switch', { name: 'Let the conductor hand off work' })).toHaveAttribute('aria-disabled', 'true'))
     expect(screen.getByTestId('slack-code-dispatch-overlay')).toHaveTextContent('config.local.json')
+    expect(screen.getByTestId('slack-code-dispatch-overlay')).toHaveTextContent(/^On, set in config\.local\.json/)
   })
   it('shows only the overlay note when config.local.json pins dispatch off', async () => {
     seed({ code_channels: true, code_channel_dispatch: false, code_channel_dispatch_overlay: true })
     await hydrated()
     await waitFor(() => expect(screen.getByTestId('slack-code-dispatch-overlay')).toBeInTheDocument())
+    expect(screen.getByTestId('slack-code-dispatch-overlay')).toHaveTextContent(/^Off, set in config\.local\.json/)
     expect(screen.queryByTestId('slack-code-dispatch-off')).toBeNull()
   })
   it('with nothing configured, files into an auto-created Code channels folder run by the conductor', async () => {
