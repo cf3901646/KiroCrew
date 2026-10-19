@@ -1554,7 +1554,9 @@ with no value the crewmate typed.
 Kind `session`, `src` `gateway`. Written after every write of the crewmate's goal
 record (a goal set, milestones applied, a reading recorded), through
 `member_goals.add_change_listener`, and only when it differs from the last one
-recorded for that thread. Folded as `goal`.
+recorded for that thread. A write while the thread has no live session (an idle
+thread between turns, or after a restart) is held, newest wins, and recorded on
+the thread's next growth, when its session is known. Folded as `goal`.
 
 | field | type | notes |
 | --- | --- | --- |

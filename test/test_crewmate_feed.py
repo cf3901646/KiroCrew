@@ -32,8 +32,10 @@ def _isolated(tmp_path, monkeypatch):
     monkeypatch.setenv("KIROCREW_HOME", str(tmp_path / "home"))
     crew_log.forget_slot_folds()
     crewmate_feed._last.clear()
+    crewmate_feed._held_goals.clear()
     yield
     crewmate_feed._last.clear()
+    crewmate_feed._held_goals.clear()
 
 
 @pytest.fixture
@@ -140,6 +142,34 @@ def test_a_goal_write_reaches_the_feed_and_is_recorded_once(appended, monkeypatc
     assert milestone["current"] == "4 fixes proposed"
     assert milestone["met"] is True
     assert milestone["at"]
+
+
+def test_a_goal_written_on_an_idle_thread_is_recorded_on_its_next_growth(appended, monkeypatch):
+    """The sync smoke's Pim: milestones pressed while the thread had no live client, so
+    there was no session to log into and the page stayed at 0/0/0. The snapshot is held
+    (newest wins) and recorded when the thread next grows and names its session."""
+    slot = _Slot([])
+    state = _State(slot)
+    monkeypatch.setattr(crewmate_feed, "_state", lambda: state)
+    live = {"sid": ""}
+    monkeypatch.setattr(crewmate_feed, "_session_of", lambda _slot: live["sid"])
+    _cards(monkeypatch, [])
+    before = {"goals": [{"text": "Sort plants"}], "key_results": []}
+    after = {
+        "goals": [{"text": "Sort plants"}],
+        "key_results": [{"text": "list sorts by last watered", "target": "yes"}],
+    }
+    crewmate_feed._goal_written("Atlas", before)
+    crewmate_feed._goal_written("Atlas", after)
+    assert appended == []  # nothing to log into yet, and nothing lost
+    live["sid"] = "s-atlas"
+    crewmate_feed._pending.add("s-atlas")
+    crewmate_feed._settle()
+    goals = [entry for entry in appended if entry[0] == "goal"]
+    assert len(goals) == 1
+    assert goals[0][1] == "s-atlas"
+    assert [m["text"] for m in goals[0][2]["milestones"]] == ["list sorts by last watered"]
+    assert crewmate_feed._held_goals == {}
 
 
 _units = iter(range(1000))

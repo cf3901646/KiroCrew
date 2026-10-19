@@ -2491,7 +2491,10 @@ the goals, each milestone's target, latest reading, `met` by
 `key_result_met` and time, and the met/open/total counts), and
 `dashboard/waiting_changed` when `waiting_items` differs from the last list
 recorded, checked after each growth of that DM log (`emit.add_growth_listener`,
-coalesced for 0.4 s), folded as `waiting` (`items`, `count`, `newest`). An
+coalesced for 0.4 s), folded as `waiting` (`items`, `count`, `newest`). A goal
+write while the thread has no live session (a milestones press between turns, a
+write after a restart) is held in `crewmate_feed._held_goals`, newest wins, and
+recorded on the thread's next growth, when its session is known. An
 entry is appended only when its snapshot differs from the last one this
 process recorded for that thread, so the check's own append records nothing.
 A goal written before the thread had a session (the create flow sets it before

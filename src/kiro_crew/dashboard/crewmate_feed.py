@@ -46,6 +46,9 @@ _lock = threading.Lock()
 _last: dict[tuple[str, str], str] = {}
 _pending: set[str] = set()
 _timer: "asyncio.TimerHandle | None" = None
+#: Per thread slot key, the newest goal record written while the thread had no live
+#: session to log it into; recorded on the thread's next growth, when it has one.
+_held_goals: dict[str, dict[str, Any]] = {}
 
 
 def _digest(data: Any) -> str:
@@ -161,7 +164,10 @@ def _settle() -> None:
             if _session_of(slot) not in grown:
                 continue
             record_waiting(state, slot)
-            if (slot.key, "goal") not in _last:
+            held = _held_goals.pop(slot.key, None)
+            if held is not None:
+                record_goal(slot, held)
+            elif (slot.key, "goal") not in _last:
                 # A goal written before the thread had a session (the create flow sets
                 # it first) was not recorded then: record it on the thread's first growth.
                 task = asyncio.get_running_loop().create_task(_record_current_goal(slot))
@@ -210,7 +216,14 @@ def _goal_written(member: str, rec: dict[str, Any]) -> None:
     for slot in _crewmate_slots(state):
         if getattr(slot, "agent", "") == member:
             try:
-                record_goal(slot, rec)
+                if _session_of(slot):
+                    _held_goals.pop(slot.key, None)
+                    record_goal(slot, rec)
+                else:
+                    # An idle thread has no live client, so no session to log into
+                    # (a milestones press between turns, a goal set after a restart).
+                    # Held, newest wins, until the thread's next growth names one.
+                    _held_goals[slot.key] = rec
             except Exception:
                 logger.debug("crewmate feed: goal for %s not recorded", slot.key, exc_info=True)
 
