@@ -408,6 +408,13 @@ async def prepare_for_session(
     if config is None:
         config = await asyncio.to_thread(KiroCrewConfig.load)
     section = config.session_environments
+    from kiro_crew.fargate_session import fargate_profile
+
+    if fargate_profile(section, profile_id) is not None:
+        from kiro_crew.fargate_session.launch import FargateSessionEnvironments
+
+        # Keyed by the owner like Coder's, so a subagent shares the parent's task.
+        return await FargateSessionEnvironments(section, home).prepare(owner_key, profile_id)
     environments = CoderSessionEnvironments(section, home)
     # Keyed by the owner, so a subagent reuses its root's workspace.
     return await environments.prepare(owner_key, profile_id)

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
@@ -13,10 +14,17 @@ import { SETTINGS_REGISTRY } from '../components/commandPalette/settingsRegistry
 vi.mock('../pages/settings/DecisionsCard', () => ({ DecisionsCard: () => null }))
 
 const profile = { id: 'dev', name: 'Development', template: 'python-dev', workdir: '/workspace/repo' }
+const fargate = {
+  id: 'aws-dev', name: 'AWS development', aws_profile: 'sandbox', region: 'us-east-1', cluster: 'dev',
+  task_definition: 'session-dev:1', subnets: ['subnet-12345678'], security_groups: ['sg-12345678'],
+  assign_public_ip: false, workdir: '/workspace',
+}
 interface Section {
   coder_url: string
   profiles: typeof profile[]
+  fargate_profiles?: typeof fargate[]
   default_profile?: string
+  stop_on_shutdown?: boolean
 }
 let stored: { session_environments?: Section }
 let reads: number
@@ -177,7 +185,7 @@ describe('Session Environments configuration preview', () => {
   })
 
   it('says a removal is undone by Discard changes, until it is saved', async () => {
-    const UNDO = 'Removed. Discard changes to undo.'
+    const UNDO = 'Removed “Development”. Discard changes restores it and undoes any other unsaved edits.'
     await mounted()
     expandAll()
     fireEvent.click(screen.getByRole('button', { name: 'Remove profile' }))
@@ -569,5 +577,180 @@ describe('Session Environments readiness and workspaces', () => {
     const link = screen.getByRole('link', { name: 'Open Coder' })
     expect(link).toHaveAttribute('href', 'https://coder.example.test')
     expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+})
+
+describe('Session Environments AWS Fargate profiles', () => {
+  it('offers no provider choice on a gateway without Fargate profiles', async () => {
+    mount()
+    await screen.findByLabelText('Coder URL')
+    expect(screen.queryByRole('radio', { name: 'AWS Fargate' })).toBeNull()
+  })
+
+  it('opens on Fargate when only Fargate is saved, and checks it without a Coder URL', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate }] } }
+    server.use(http.post('*/api/session-environments/check', () => HttpResponse.json({
+      coder: { ok: false, error: 'no Coder URL is saved' },
+      profiles: [],
+      fargate: [{ id: 'aws-dev', ok: true }],
+      git: {},
+    })))
+    mount()
+    expect(await screen.findByRole('radio', { name: 'AWS Fargate' })).toBeChecked()
+    expect(screen.getByText(/different from Deploy my crew/)).toBeVisible()
+    fireEvent.click(check())
+    const results = await screen.findByRole('list', { name: 'Check results' })
+    expect(results).toHaveTextContent('AWS development: task definition session-dev:1 is ready')
+    // A Fargate-only setup reports no Coder line.
+    expect(results).not.toHaveTextContent('Coder')
+  })
+
+  it('adds a private-network Fargate profile and saves it with the section', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [] } }
+    mount()
+    fireEvent.click(await screen.findByRole('radio', { name: 'AWS Fargate' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add profile' }).find(b => b.closest('[hidden]') === null)!)
+    fireEvent.change(screen.getByLabelText('AWS CLI profile'), { target: { value: 'sandbox' } })
+    fireEvent.change(screen.getByLabelText('AWS region'), { target: { value: 'us-east-1' } })
+    fireEvent.change(screen.getByLabelText('ECS cluster name or ARN'), { target: { value: 'dev' } })
+    fireEvent.change(screen.getByLabelText('Task definition name:revision or ARN'), { target: { value: 'session-dev:1' } })
+    fireEvent.change(screen.getByLabelText('Subnet IDs, comma-separated'), { target: { value: 'subnet-12345678, subnet-87654321,' } })
+    fireEvent.change(screen.getByLabelText('Security group IDs, comma-separated'), { target: { value: 'sg-12345678' } })
+    expect(screen.getByRole('switch', { name: 'Assign public IP' })).not.toBeChecked()
+    fireEvent.click(save())
+    await screen.findByText(SAVED)
+    expect(writes).toEqual([{ path: 'session_environments', value: {
+      coder_url: '', profiles: [], fargate_profiles: [{
+        id: 'fargate-1', name: '', aws_profile: 'sandbox', region: 'us-east-1', cluster: 'dev',
+        task_definition: 'session-dev:1', subnets: ['subnet-12345678', 'subnet-87654321'],
+        security_groups: ['sg-12345678'], assign_public_ip: false, workdir: '/workspace',
+      }],
+    } }])
+  })
+
+  it('keeps a typed comma and space in a list field and saves the parsed list', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate, subnets: [] }] } }
+    const u = userEvent.setup()
+    mount()
+    await screen.findByRole('radio', { name: 'AWS Fargate' })
+    expand('AWS development')
+    const subnets = screen.getByLabelText('Subnet IDs, comma-separated')
+    await u.click(subnets)
+    await u.keyboard('subnet-a, subnet-b')
+    expect(subnets).toHaveValue('subnet-a, subnet-b')
+    await u.keyboard(',')
+    expect(subnets).toHaveValue('subnet-a, subnet-b,')
+    // Leaving the field tidies it to the list the draft holds.
+    await u.tab()
+    expect(subnets).toHaveValue('subnet-a, subnet-b')
+    fireEvent.click(save())
+    await screen.findByText(SAVED)
+    expect(writes).toEqual([{ path: 'session_environments', value: {
+      coder_url: '', profiles: [], fargate_profiles: [{ ...fargate, subnets: ['subnet-a', 'subnet-b'] }],
+    } }])
+  })
+
+  it('says a Fargate task bills while it runs and names both things that stop it', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate }] } }
+    mount()
+    await screen.findByRole('radio', { name: 'AWS Fargate' })
+    const manage = screen.getByRole('region', { name: '3. Manage' })
+    expect(manage).toHaveTextContent('which AWS bills for while it runs, even while nobody uses it')
+    // The same two stop conditions the composer notice and the shutdown note give.
+    expect(manage).toHaveTextContent(
+      'It stops when you archive the chat, or on its own about 15 minutes after Kiro Crew stops running.',
+    )
+  })
+
+  it('reports a failed Fargate check through the error notice', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate }] } }
+    server.use(http.post('*/api/session-environments/check', () => HttpResponse.json({
+      coder: { ok: false, error: 'no Coder URL is saved' },
+      profiles: [],
+      fargate: [{ id: 'aws-dev', ok: false, error: 'the task definition sets an entryPoint' }],
+      git: {},
+    })))
+    mount()
+    await screen.findByRole('radio', { name: 'AWS Fargate' })
+    fireEvent.click(check())
+    const results = await screen.findByRole('list', { name: 'Check results' })
+    expect(within(results).getByRole('alert')).toHaveTextContent('AWS development: the task definition sets an entryPoint')
+  })
+
+  it('lists only the chosen provider\'s environments', async () => {
+    stored = { session_environments: { coder_url: 'https://coder.example.test', profiles: [{ ...profile }], fargate_profiles: [{ ...fargate }] } }
+    server.use(http.get('*/api/session-environments/workspaces', () => HttpResponse.json({
+      workspaces: [
+        { workspace: 'crewenv-devuser-aaaa', slot: 'chat-1', state: 'running', template: 't', created_at: '2026-10-09T10:00:00Z', deletion_due_at: '' },
+        { workspace: 'abc123def456', provider: 'fargate', slot: 'chat-2', state: 'running', template: 'aws-dev', created_at: '', deletion_due_at: '' },
+      ],
+    })))
+    mount()
+    const coderList = await screen.findByRole('list', { name: 'Workspaces' })
+    expect(coderList).toHaveTextContent('crewenv-devuser-aaaa')
+    expect(coderList).not.toHaveTextContent('abc123def456')
+    fireEvent.click(screen.getByRole('radio', { name: 'AWS Fargate' }))
+    const fargateList = await screen.findByRole('list', { name: 'Workspaces' })
+    expect(fargateList).toHaveTextContent('abc123def456')
+    expect(fargateList).toHaveTextContent('Fargate session task')
+    expect(screen.queryByRole('link', { name: 'Open Coder' })).toBeNull()
+  })
+
+  it('offers a Fargate profile as the default and drops it with the profile', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate }], default_profile: 'aws-dev' } }
+    mount()
+    await screen.findByRole('radio', { name: 'AWS Fargate' })
+    expect(screen.getByRole('switch', { name: 'Start new chats on an environment profile' })).toBeChecked()
+    expand('AWS development')
+    const remove = screen.getAllByRole('button', { name: 'Remove profile' }).find(b => b.closest('[hidden]') === null)!
+    fireEvent.click(remove)
+    fireEvent.click(save())
+    await screen.findByText(SAVED)
+    expect(writes).toEqual([{ path: 'session_environments', value: {
+      coder_url: '', profiles: [], fargate_profiles: [], default_profile: '',
+    } }])
+  })
+
+  it('says under the shutdown switch that Fargate tasks are not stopped and idle-exit instead', async () => {
+    const note = /^Has no effect on AWS Fargate tasks: they keep running at shutdown.*A task stops when you archive its chat, or on its own about 15 minutes after Kiro Crew stops running\.$/
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate }], stop_on_shutdown: true } }
+    mount()
+    const shutdown = await screen.findByRole('switch', { name: /^Stop workspaces when .* shuts down$/ })
+    const text = screen.getByText(note)
+    expect(text).toBeVisible()
+    expect(shutdown.getAttribute('aria-describedby')?.split(' ')).toContain(text.id)
+    cleanup(); qc.clear()
+    // A Coder-only setup on a Fargate-capable gateway has no Fargate tasks to explain.
+    stored = { session_environments: { coder_url: 'https://coder.example.test', profiles: [{ ...profile }], fargate_profiles: [], stop_on_shutdown: true } }
+    mount()
+    expect(await screen.findByRole('switch', { name: /^Stop workspaces when .* shuts down$/ })).toBeVisible()
+    expect(screen.queryByText(note)).toBeNull()
+  })
+
+  it('says switching providers keeps both providers\' profiles', async () => {
+    stored = { session_environments: { coder_url: 'https://coder.example.test', profiles: [{ ...profile }], fargate_profiles: [{ ...fargate }] } }
+    mount()
+    const choice = (await screen.findByRole('radio', { name: 'AWS Fargate' })).closest('fieldset')!
+    expect(choice).toHaveAccessibleDescription(/Each provider keeps its own profiles.*nothing is lost/)
+    fireEvent.click(screen.getByRole('radio', { name: 'AWS Fargate' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Coder' }))
+    expect(screen.getByLabelText('Coder URL')).toHaveValue('https://coder.example.test')
+    expect(save()).toBeDisabled()
+  })
+
+  it('names the removed profile and says Discard changes brings it back', async () => {
+    stored = { session_environments: { coder_url: '', profiles: [], fargate_profiles: [{ ...fargate }] } }
+    mount()
+    await screen.findByRole('radio', { name: 'AWS Fargate' })
+    expect(screen.queryByText(/Removed “/)).toBeNull()
+    expandAll()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove profile' }))
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Removed “AWS development”. Discard changes restores it and undoes any other unsaved edits.',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+    expect(screen.queryByText(/Removed “/)).toBeNull()
+    expect(screen.getByText('AWS development')).toBeVisible()
+    expect(writes).toEqual([])
   })
 })

@@ -3415,8 +3415,8 @@ screenshot.
 
 `session_environments` (`SessionEnvironmentsConfig` in `config/sections.py`)
 persists what the Settings UI needs to offer remote session environments, and
-nothing else: `coder_url`, `profiles`, and the optional `default_profile` and
-`stop_on_shutdown`. `config/session_environments.py` owns
+nothing else: `coder_url`, `profiles`, and the optional `fargate_profiles`,
+`default_profile` and `stop_on_shutdown`. `config/session_environments.py` owns
 every rule: its strict `validate_*` functions back the dashboard write gate (a
 400, nothing written) and its lenient `load_session_environments` backs
 `SessionEnvironmentsConfig.from_raw`, which keeps every valid part of a
@@ -3432,9 +3432,33 @@ duplicate or over-cap profile is dropped with a warning).
   digit then letters, digits, `_` or `-` (64 max, unique); `name` is 1-128
   characters, `template` 1-255, `workdir` an absolute POSIX path of at most
   1024. Text is whitespace-stripped and may not hold control characters.
+- `fargate_profiles`: at most 20 AWS Fargate records, each exactly `{id, name,
+  aws_profile, region, cluster, task_definition, subnets, security_groups,
+  assign_public_ip, workdir}` (`validate_fargate_profile`). `id`, `name` and
+  `workdir` follow the Coder profile bounds. `aws_profile` is the NAME of an AWS
+  CLI profile configured on the gateway machine, never a key; `region` uses AWS
+  region syntax; `cluster` and `task_definition` are ECS names or ARNs (no
+  leading `-`, so neither can read as a CLI flag); `subnets` holds 1-16 and
+  `security_groups` 1-5 distinct `subnet-`/`sg-` IDs; `assign_public_ip` is a
+  boolean, false for new UI profiles. A save checks syntax only: no AWS call is
+  made and nothing is created. The task definition owns the image, size,
+  storage and IAM roles.
 - `default_profile`: a saved profile id or `""` (this machine); a whole-section
   save refuses a default the same save drops.
 - `stop_on_shutdown`: a boolean, default `true`.
+
+`PROVIDER_PROFILE_LISTS` names every provider's list. Every leaf or
+whole-section save checks their ids after merging under the config write lock,
+including lists omitted by an older client, and refuses a cross-provider
+collision with a 400 and no write. That check skips malformed stored lists and
+entries without string ids and ignores repeats within one list, so an unrelated
+save can preserve hand-edited data the loader drops. The lenient loader drops
+malformed entries by index (never logging a value) but retains cross-provider
+collisions, so the shared launch resolver refuses an ambiguous id rather than
+pick a provider, and the picker excludes ambiguous ids even with no Coder URL.
+Choice rows record the resolved provider for inspection; dispatch derives it
+from the profile id, including for a row written with a different provider
+label.
 
 There is no `enabled` field (the opt-in is the per-device preview flag) and no
 credential field, so the masked GET returns the whole section; unknown keys are
@@ -3442,7 +3466,7 @@ refused. An absent or non-object section loads with every key at its default,
 and an unmodelled key inside it is preserved by `save()` and omitted from the
 GET.
 
-`PATCH /api/config/kirocrew` accepts `session_environments` and each of its five
+`PATCH /api/config/kirocrew` accepts `session_environments` and each of its six
 keys as paths, all through the `"normalized"` spec type. Whole-section saves
 require the Coder keys; an omitted `SECTION_OPTIONAL_KEYS` key keeps its saved
 value under the config lock. A write goes through `update_config_locked`,

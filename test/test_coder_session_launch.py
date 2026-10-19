@@ -835,6 +835,7 @@ async def test_check_endpoint_reports_sign_in_and_each_profile(tmp_path, monkeyp
         assert body == {
             "coder": {"ok": False, "error": "no Coder URL is saved"},
             "profiles": [],
+            "fargate": [],
             "git": git,
         }
         body = await (await client.post("/check")).json()

@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, Cloud, Laptop, Loader2, Lock } from 'lucide-react'
-import { CoderIcon } from './BrandIcon'
+import { Check, Cloud, ExternalLink, Laptop, Loader2, Lock } from 'lucide-react'
+import { CoderIcon, FargateIcon } from './BrandIcon'
 import { api, type SlotEnvironment } from '../api/client'
 import { ApiError, apiErrorCode } from '../api/apiError'
 import ErrorNotice from './ErrorNotice'
+import StatusNotice from './StatusNotice'
 import { SLOT_ENVIRONMENT_RETRY, START_POLL_MS, slotEnvironmentQueryKey, useEnvironmentStartLabel } from './sessionEnvironmentHooks'
 import { useAppDispatch } from '../store'
 import { setAgentSwitchNotice } from '../store/chatSlice'
@@ -13,6 +14,7 @@ import { agentSwitchFailureMessage } from '../utils/agentSwitchFeedback'
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -22,6 +24,8 @@ import {
 
 /** Radix radio values are strings; this one stands for "no profile". */
 const LOCAL_VALUE = '__local__'
+/** AWS's own price list: a Fargate task's cost depends on its region and size. */
+const FARGATE_PRICING_URL = 'https://aws.amazon.com/fargate/pricing/'
 
 interface Props {
   slot: string
@@ -36,12 +40,11 @@ interface Props {
  *  exist (or on an app caller's 403). */
 /** The provider's decorative brand mark; an unknown provider keeps the generic cloud. */
 function ProviderGlyph({ provider, size }: { provider?: string; size: number }) {
-  if (provider !== 'coder') return <Cloud size={size} className="shrink-0 opacity-80" aria-hidden />
-  return (
-    <span data-testid={`provider-mark-${provider}`} className="inline-flex shrink-0 items-center" aria-hidden="true">
-      <CoderIcon size={Math.round(size * 0.8)} />
-    </span>
-  )
+  const mark = provider === 'coder' ? <CoderIcon size={Math.round(size * 0.8)} />
+    : provider === 'fargate' ? <FargateIcon size={size} />
+      : null
+  if (!mark) return <Cloud size={size} className="shrink-0 opacity-80" aria-hidden />
+  return <span data-testid={`provider-mark-${provider}`} className="inline-flex shrink-0 items-center" aria-hidden="true">{mark}</span>
 }
 
 export default function SessionEnvironmentChip({ slot, disabled, compact }: Props) {
@@ -185,12 +188,29 @@ export default function SessionEnvironmentChip({ slot, disabled, compact }: Prop
                 <ProviderGlyph provider={p.provider} size={14} />
                 <span className="flex flex-col min-w-0 flex-1">
                   <span className="truncate">{p.name}</span>
+                  {p.provider === 'fargate' && (
+                    <span className="text-[12px] text-muted leading-snug">{t('sessionEnvironments.picker.fargateWhere')}</span>
+                  )}
                   <span className="truncate text-[12px] text-muted font-mono">{p.workdir}</span>
                 </span>
                 {mark(p.id)}
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          {/* What a Fargate pick costs in plain words, beside AWS's own price
+            * list: no figure here, since prices vary by region and change. */}
+          {data.profiles.some(p => p.provider === 'fargate') && (
+            <>
+              <StatusNotice tone="info" testId="fargate-cost-notice" className="mx-2 my-1.5 text-[12px]"
+                message={t('sessionEnvironments.picker.fargateCostNotice')} />
+              <DropdownMenuItem asChild>
+                <a href={FARGATE_PRICING_URL} target="_blank" rel="noopener noreferrer" className="text-[12px]">
+                  <ExternalLink className="lucide-inline shrink-0" size={13} aria-hidden />
+                  <span>{t('sessionEnvironments.picker.fargatePricing')}</span>
+                </a>
+              </DropdownMenuItem>
+            </>
+          )}
           <DropdownMenuSeparator />
           <p className="px-3 py-1.5 text-[11px] text-muted leading-snug">
             {t('sessionEnvironments.picker.appliesNext')}

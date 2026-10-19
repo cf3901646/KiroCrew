@@ -948,10 +948,14 @@ export interface SessionEnvironmentsCheck {
   profiles: { id: string; ok: boolean; error?: string }[]
   /** Absent from a gateway that predates the git rows. */
   git?: Record<string, GitLoginStatus>
+  /** Per saved AWS Fargate profile: task definition readable and usable. Older gateways omit it. */
+  fargate?: { id: string; ok: boolean; error?: string }[]
 }
 
 export interface SessionEnvironmentWorkspace {
   workspace: string
+  /** Older gateways omit it; those rows are Coder workspaces. */
+  provider?: 'coder' | 'fargate'
   slot: string
   state: string
   template: string

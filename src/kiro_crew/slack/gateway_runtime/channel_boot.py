@@ -233,6 +233,7 @@ def _register_config_appliers(self: GatewayOrchestrator) -> None:
     self._config_subs = [
         live.subscribe(
             "session_environments.coder_url",
+            "session_environments.fargate_profiles",
             callback=self._on_session_environment_config_change,
             name="GatewayOrchestrator.session_environments",
         ),

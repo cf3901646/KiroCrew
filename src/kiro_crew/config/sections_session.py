@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from kiro_crew.config.fields import _meta
 from kiro_crew.config.sections_defaults import (
@@ -487,6 +488,17 @@ class SessionEnvironmentsConfig:
         ),
     )
 
+    fargate_profiles: list[dict[str, Any]] = field(
+        default_factory=list,
+        metadata=_meta(
+            "Fargate Profiles",
+            "Named AWS Fargate profiles (at most 20), each {id, name, aws_profile, region, "
+            "cluster, task_definition, subnets, security_groups, assign_public_ip, workdir}. "
+            "References only: aws_profile names a profile of the gateway's AWS CLI, and no "
+            "credential is stored.",
+        ),
+    )
+
     default_profile: str = field(
         default="",
         metadata=_meta(
@@ -514,14 +526,19 @@ class SessionEnvironmentsConfig:
         """Build from the raw section, keeping every valid part (never raises)."""
         from kiro_crew.config.session_environments import (
             load_default_profile,
+            load_fargate_profiles,
             load_session_environments,
             load_stop_on_shutdown,
         )
 
         coder_url, profiles = load_session_environments(section)
+        # Keep cross-provider collisions visible so dispatch can refuse them;
+        # choosing one here would silently move the session to another provider.
+        fargate = load_fargate_profiles(section)
         return cls(
             coder_url=coder_url,
             profiles=[SessionEnvironmentProfileConfig(**p) for p in profiles],
+            fargate_profiles=fargate,
             default_profile=load_default_profile(section),
             stop_on_shutdown=load_stop_on_shutdown(section),
         )

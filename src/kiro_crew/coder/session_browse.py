@@ -1,6 +1,8 @@
 """Dashboard access to a remote session's workspace over ``coder ssh``: read-only
 ``--browse``, a separate ``--write`` that refuses a stale ``expected``, and an
 interactive shell. None autostarts a stopped workspace; requests go on stdin.
+An AWS Fargate session is reached through its task's bootstrap instead, which
+never launches a task.
 """
 
 from __future__ import annotations
@@ -42,7 +44,8 @@ class WorkspaceNotRunning(SessionEnvironmentUnavailable):
 
 @dataclass(frozen=True)
 class _Target:
-    shell: CoderShell
+    #: A :class:`CoderShell`, or a ``FargateShell`` for an AWS Fargate task.
+    shell: Any
     workdir: str
     binding_id: str
     home: Any
@@ -69,6 +72,10 @@ async def _resolve(session_key: str) -> _Target:
     if config is None:
         config = await asyncio.to_thread(KiroCrewConfig.load)
     section = config.session_environments
+    from kiro_crew.fargate_session import fargate_profile
+
+    if fargate_profile(section, profile_id) is not None:
+        return await _resolve_fargate(section, home, owner, profile_id)
     provider = CoderSessionEnvironments(section, home)
     profile = provider.profile(profile_id)
     registry = WorkspaceBindingRegistry(home / "coder" / "session-envs.json")
@@ -105,6 +112,24 @@ async def _resolve(session_key: str) -> _Target:
     )
 
 
+async def _resolve_fargate(section: Any, home: Any, owner: str, profile_id: str) -> _Target:
+    """The session's enrolled Fargate task, reached through its bootstrap.
+
+    Never launches a task and makes no AWS call: the HMAC on every bootstrap
+    answer is the live proof that the task is the one this gateway enrolled.
+    """
+    from kiro_crew.fargate_session.launch import FargateSessionEnvironments
+
+    envs = FargateSessionEnvironments(section, home)
+    profile = envs.profile(profile_id)
+    shell = await envs.shell_for(owner, profile_id)
+    if shell is None:
+        raise WorkspaceNotRunning("this session's task is not running")
+    row = await asyncio.to_thread(envs.registry.get, owner)
+    binding = row.worker_binding if row is not None else ""
+    return _Target(shell, str(profile.get("workdir") or ""), binding, home)
+
+
 async def _ask(target: _Target, mode: str, request: dict[str, Any]) -> dict[str, Any]:
     # The workdir is operator config, quoted; the request travels on stdin.
     command = (
@@ -114,6 +139,9 @@ async def _ask(target: _Target, mode: str, request: dict[str, Any]) -> dict[str,
     payload = json.dumps(request).encode("utf-8")
 
     async def once() -> bytes:
+        if not isinstance(target.shell, CoderShell):
+            # A Fargate task has no dial command: its bootstrap runs the command.
+            return await asyncio.wait_for(target.shell.run(command, payload), _BROWSE_TIMEOUT)
         return await run_collect(
             target.shell.argv(command),
             payload,
@@ -211,5 +239,10 @@ async def unsaved_work(session_key: str) -> str | None:
 async def remote_terminal_argv(session_key: str) -> list[str]:
     """argv for a login shell in the workspace (the template sets its directory)."""
     target = await _resolve(session_key)
+    if not isinstance(target.shell, CoderShell):
+        raise SessionEnvironmentUnavailable(
+            "an AWS Fargate session has no terminal; its commands run through the "
+            "agent's workspace tools"
+        )
     # Coder never autostarts a stopped workspace here.
     return list(target.shell.interactive_argv())

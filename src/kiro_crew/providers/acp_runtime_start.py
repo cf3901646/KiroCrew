@@ -564,7 +564,7 @@ async def _start_kiro_runtime_impl(
         await prepare_for_session(
             session_key, before_compute=runtime.check_remote_workspace_supported
         )
-        if bool(section.coder_url or section.profiles)
+        if bool(section.coder_url or section.profiles or section.fargate_profiles)
         or await asyncio.to_thread(_choices_file_may_exist)
         else None
     )
