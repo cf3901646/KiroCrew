@@ -1872,8 +1872,20 @@ The permission PUT is compare-and-set: the profile sends
 stale write with 409 `approval_mode_conflict` carrying the stored value, which
 the profile then shows. An applied write also moves the crewmate's live DM
 slot, in the same handler and under the same config lock, through
-`apply_approval_mode` (the mutation half of `POST /api/chat/mode`); the browser
-never writes a thread's permission. The profile locks its pickers while the
+`apply_approval_mode` (the mutation half of `POST /api/chat/mode`), and every
+live worker session of that crewmate with it (`crewmate_approval.apply_to_live_sessions`);
+the browser never writes a thread's permission. The same setting covers the
+crewmate's workers, and the hints under the picker say so ("in every chat with
+it and in the work it hands to its worker"). Slot trust lives in memory, so
+`chat_runner` seeds a crewmate's sessions again at the start of each turn,
+once per live slot and before the provider is claimed
+(`crewmate_approval.seed_for_turn`): the conductor chat (a `member` record on
+the conductor) and each worker (a `template` record on `kirocrew-mate-worker`
+carrying the crewmate's `member_id`), so a session restored, revived or resumed
+after a restart runs under the crewmate's Permissions instead of asking for
+every tool. A worker opened by the conductor takes the record's mode at birth,
+not the thread's live grant. The governance ceiling still decides each call
+(`test/test_crewmate_worker_approval.py`). The profile locks its pickers while the
 thread is opening or refused.
 
 The DM's composer is `CrewComposer`, handed to `ChatPane` as `composerInput`.
@@ -3276,13 +3288,32 @@ chat, the hand-off (`_dispatching_crewmate`) and `is_conductor_execution` alike
   page shows; an unreadable config adds nothing). Every `allowedTools` grant and
   `autoApprove` entry naming an excluded `@server/tool` is dropped. The KAS wire
   carries only what the spec declares, so without this the page's switch would
-  not reach a worker. The merge runs at projection time on the KAS host
-  (`acp/harness/kas.mate_worker_projection`), which reads the crewmate from the
-  worker session's own execution record -- the identity `session_create` bound
-  and vouched for at birth -- so a worker only ever carries its own crewmate's
+  not reach a worker. The merge is one harness-neutral seam,
+  `mate_worker.worker_session_spec`, which reads the crewmate from the worker
+  session's own execution record -- the identity `session_create` bound and
+  vouched for at birth -- so a worker only ever carries its own crewmate's
   additions. No record, no member on it, a binding that owns no file, or an
-  unreadable file projects the worker base. On a host that takes its agent at
-  spawn time the worker runs its base.
+  unreadable file gives the worker base. A harness reads that seam through its
+  projection (`acp/harness/kas.mate_worker_projection`, which resolves the
+  prompt KAS's way and hands the rest to the seam).
+- **The worker runs on its crewmate's backend, with its kit, or not at all.**
+  A worker session is not a member DM, but `members.select_provider_backend`
+  routes it like one: a key `mate_worker.note_worker_session` published -- at
+  the child's birth in `session_create`, and on the record read every turn and
+  resume prefetch makes before allocating (`resolve_session_agent_bindings`), so
+  a restart keeps it -- takes `agent.member_acp_backend` through the same gate
+  (a stored `kiro` reads as KAS), never `agent.acp_backend`. The identity is
+  positive: a `template` record on `kirocrew-mate-worker` with a member id
+  (`mate_worker.is_own_worker_execution`). The pin is that record, so the worker
+  follows its crewmate's backend for its whole life. Only a backend in
+  `ACP_BACKENDS_MATE_WORKER_KIT` carries the per-session spec (harness-parity.md);
+  today that is KAS. `session_create` refuses a hand-off whose worker would run
+  anywhere else (`worker_kit_harness_unsupported`, naming the backends that can
+  carry it), and the allocation refuses a worker session on a provider that does
+  not answer `mate_worker_kit_supported` before spawn, so a worker never runs the
+  bare on-disk base with its crewmate's servers missing and its switched-off
+  tools back. The worker's model pin is judged against the same backend
+  (`mate_worker.crewmate_worker_backend`).
 
 **A worker reports back on its own** (`dashboard/mate_thread_wakes.py`), so the
 conductor dispatches and ends its turn and is free for the user at any moment.

@@ -246,33 +246,19 @@ def mate_worker_projection(
 ) -> dict[str, Any]:
     """The worker spec a crewmate's worker session on *session_key* is handed.
 
-    *base* is the source-defined ``kirocrew-mate-worker`` spec. The crewmate is
-    read from the session's own execution record -- the identity
-    ``session_create`` bound and vouched for at the child's birth, never a name
-    the session supplies -- so the additions are always the dispatching
-    crewmate's own. With no record, or no member on it, the worker runs its base.
-    Blocking file I/O; runs inside the projection's worker thread.
+    *base* is the source-defined ``kirocrew-mate-worker`` spec. KAS's own part is
+    the prompt, resolved the way KAS resolves every prompt; the kit is the
+    harness-neutral seam :func:`kiro_crew.mate_worker.worker_session_spec`, which
+    reads the crewmate from the session's own execution record. Blocking file
+    I/O; runs inside the projection's worker thread.
     """
-    from kiro_crew.execution_context import read_session_execution
-    from kiro_crew.mate_worker import resolve_worker_spec
+    from kiro_crew.mate_worker import worker_session_spec
 
     literal = dict(base)
     literal["prompt"] = kas_agents_mod.resolve_prompt(
         base, agent_id=MATE_WORKER_AGENT, agents_dir=prompt_dir
     )
-    member_id: str | None = None
-    try:
-        execution = read_session_execution(session_key) if session_key else None
-    except Exception:  # noqa: BLE001 - an unreadable record adds nothing
-        logger.warning(
-            "worker session %s: execution record unreadable; projecting the worker base",
-            session_key,
-            exc_info=True,
-        )
-        execution = None
-    if execution is not None:
-        member_id = execution.member_id
-    return resolve_worker_spec(literal, member_id)
+    return worker_session_spec(literal, session_key)
 
 
 def _missing_agent_reason(agent: str, session_key: str) -> str:

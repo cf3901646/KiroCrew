@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 from chat_test_helpers import _make_state
 from member_memory_helpers import forget_declared_stores, write_member_home
 
 from kiro_crew import mate_worker
+from kiro_crew.acp_backends import ACP_BACKENDS_KNOWN, ACP_BACKENDS_MATE_WORKER_KIT
 from kiro_crew.config import loader
 from kiro_crew.dashboard import create_rate_limit
 from kiro_crew.dashboard import session_control as sc
@@ -182,3 +184,136 @@ def sc_conducts(slot):
     from kiro_crew.execution_context import read_session_execution
 
     return _conducts_for_a_worker(slot, read_session_execution(slot_history_key(slot)))
+
+
+# ── the worker runs on its crewmate's backend, with its kit, or not at all ──
+
+
+def _set_backends(tmp_path, *, default: str, member: str) -> None:
+    """Store ``agent.acp_backend`` / ``agent.member_acp_backend`` as a user would."""
+    path = tmp_path / "config.json"
+    config = json.loads(path.read_text(encoding="utf-8"))
+    config.setdefault("agent", {}).update({"acp_backend": default, "member_acp_backend": member})
+    path.write_text(json.dumps(config), encoding="utf-8")
+    loader._invalidate_config_cache()
+
+
+@pytest.fixture
+def no_known_workers(monkeypatch):
+    from kiro_crew import members
+
+    monkeypatch.setattr(members, "_CREWMATE_WORKER_SLOTS", set())
+    return members
+
+
+def _selected(key: str) -> str:
+    from kiro_crew.members import select_provider_backend
+
+    agent = loader.KiroCrewConfig.load().agent
+    return select_provider_backend(key, agent.member_acp_backend, agent.acp_backend)
+
+
+@pytest.mark.parametrize("member", ["kas", "kiro"])
+def test_the_worker_runs_on_its_crewmates_backend_not_the_default(
+    crewmate, tmp_path, no_known_workers, member
+):
+    """Ray's live shape: ``acp_backend`` Kiro, crewmates on KAS (a stored ``kiro``
+    member backend reads as KAS too). The worker follows its crewmate."""
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
+
+    _set_backends(tmp_path, default="kiro", member=member)
+    state, caller, _execution = crewmate
+    worker = state.get_slot(_create(state, caller)["target"])
+    key = slot_history_key(worker)
+
+    assert _selected(key) == ACP_BACKEND_KAS
+    # Any other session on the default keeps the default.
+    assert _selected("dashboard:chat-unrelated") == ACP_BACKEND_KIRO
+
+
+def test_the_worker_keeps_its_backend_after_a_restart(crewmate, tmp_path, no_known_workers):
+    """A restart forgets the in-memory set; the record read every turn makes
+    before allocating (``resolve_session_agent_bindings``) puts the worker back."""
+    from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS, ACP_BACKEND_KIRO
+    from kiro_crew.session_agent_selection import resolve_session_agent_bindings
+
+    _set_backends(tmp_path, default="kiro", member="kas")
+    state, caller, _execution = crewmate
+    key = slot_history_key(state.get_slot(_create(state, caller)["target"]))
+    no_known_workers._CREWMATE_WORKER_SLOTS.clear()
+    assert _selected(key) == ACP_BACKEND_KIRO  # the gap the read below closes
+
+    def resolver(config, selected, *project, **kwargs):
+        return SimpleNamespace(kiro_agent=MATE_WORKER_AGENT, memory_store_name="")
+
+    resolve_session_agent_bindings(resolver, loader.KiroCrewConfig.load(), key, MATE_WORKER_AGENT)
+
+    assert _selected(key) == ACP_BACKEND_KAS
+
+
+def test_a_worker_on_a_backend_that_cannot_carry_its_kit_is_refused(
+    crewmate, tmp_path, no_known_workers
+):
+    _set_backends(tmp_path, default="kiro", member="claude")
+    state, caller, _execution = crewmate
+    before = set(state._slots)
+
+    with pytest.raises(sc.SessionControlError) as refused:
+        _create(state, caller)
+
+    assert refused.value.code == "worker_kit_harness_unsupported"
+    assert "claude" in str(refused.value) and "kas" in str(refused.value)
+    assert set(state._slots) == before  # nothing was allocated
+
+
+def test_only_the_crewmates_worker_record_routes_to_its_backend(no_known_workers):
+    from kiro_crew.execution_context import ExecutionContext, MemoryStoreRef
+
+    def record(kind, template, member="pixel"):
+        return ExecutionContext(member, MemoryStoreRef("member-pixel-1", member), kind, template)
+
+    assert mate_worker.note_worker_session(
+        "dashboard:chat-1", record("template", MATE_WORKER_AGENT)
+    )
+    for key, other in (
+        ("dashboard:chat-2", record("member", MATE_CONDUCTOR_AGENT)),
+        ("dashboard:chat-3", record("template", "kirocrew-worker")),
+        ("dashboard:chat-4", record("member", MATE_WORKER_AGENT)),
+        ("dashboard:chat-5", None),
+    ):
+        assert not mate_worker.note_worker_session(key, other), key
+    assert no_known_workers._CREWMATE_WORKER_SLOTS == {"chat-1"}
+    # Every spelling of the key answers the same.
+    assert no_known_workers.is_crewmate_worker_session("dashboard_chat-1")
+
+
+@pytest.mark.parametrize("backend", sorted(ACP_BACKENDS_KNOWN))
+def test_every_backend_carries_the_kit_or_refuses_the_worker(backend, monkeypatch, tmp_path):
+    """No backend runs a crewmate's worker on the bare base: either its projection
+    carries the per-session spec, the crewmate's switched-off tool withheld, or the
+    worker is refused with a remedy."""
+    refusal = mate_worker.worker_kit_backend_refusal(backend)
+    if backend not in ACP_BACKENDS_MATE_WORKER_KIT:
+        assert refusal and "agent.member_acp_backend" in refusal
+        return
+    assert refusal is None
+    from kiro_crew.config import paths as paths_mod
+
+    mates = tmp_path / "mates"
+    mates.mkdir()
+    (mates / "pixel.json").write_text(
+        json.dumps({"name": "pixel", "prompt": "", "excludedTools": ["@jira/delete_issue"]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paths_mod, "mate_agents_dir", lambda: mates)
+    monkeypatch.setattr(mate_worker, "mate_file_for_member", lambda member, config=None: "pixel")
+    monkeypatch.setattr(mate_worker, "globally_disabled_refs", lambda names: [])
+    monkeypatch.setattr(
+        "kiro_crew.execution_context.read_session_execution",
+        lambda key: SimpleNamespace(member_id="pixel"),
+    )
+    base = {"name": MATE_WORKER_AGENT, "prompt": "base", "tools": ["fs_read"], "mcpServers": {}}
+
+    spec = mate_worker.worker_session_spec(base, "dashboard:chat-9")
+
+    assert "@jira/delete_issue" in spec.get("excludedTools", [])

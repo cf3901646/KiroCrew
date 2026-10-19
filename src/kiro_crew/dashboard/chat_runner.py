@@ -13241,6 +13241,16 @@ async def _run_chat(
             )
             _err_meta = _terminal_error_meta(exc)
         elif (
+            isinstance(exc, CapabilityStartupError) and str(exc) == "worker_kit_harness_unsupported"
+        ):
+            from kiro_crew.mate_worker import crewmate_worker_backend, worker_kit_backend_refusal
+
+            _err_text = "worker_kit_harness_unsupported: " + (
+                worker_kit_backend_refusal(crewmate_worker_backend(KiroCrewConfig.load().agent))
+                or "this worker's backend cannot carry its kit; start a new hand-off"
+            )
+            _err_meta = _terminal_error_meta(exc)
+        elif (
             isinstance(exc, CapabilityStartupError)
             and str(exc) == "capability_tool_limits_unsupported"
         ):

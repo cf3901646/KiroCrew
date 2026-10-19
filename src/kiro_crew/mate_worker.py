@@ -490,3 +490,98 @@ def resolve_worker_spec(base: dict[str, Any], member_id: str | None) -> dict[str
         return merge_worker_spec(base, _with_global_tool_offs(base, {}))
     additions = worker_additions(base, mate_spec)
     return merge_worker_spec(base, _with_global_tool_offs(base, additions))
+
+
+def is_own_worker_execution(execution: Any) -> bool:
+    """Whether *execution* is a crewmate's own worker: the worker on that crewmate's store.
+
+    Positive identity from the attested record ``session_create`` binds at the
+    child's birth: a ``template`` selection running :data:`MATE_WORKER_AGENT`
+    with a member id. Every other record, and no record, answers False.
+    """
+    return (
+        execution is not None
+        and getattr(execution, "selection_kind", "") == "template"
+        and getattr(execution, "template_id", "") == MATE_WORKER_AGENT
+        and bool(getattr(execution, "member_id", None))
+    )
+
+
+def note_worker_session(session_key: str, execution: Any) -> bool:
+    """Publish *session_key* as a crewmate's worker when its record says so.
+
+    What makes the backend selection (``members.select_provider_backend``) route
+    the worker to its crewmate's backend: the selection is an in-memory test, and
+    this is the one writer, called wherever the record is read before a session
+    is allocated. Returns whether the key is a worker.
+    """
+    from kiro_crew.members import note_crewmate_worker_session
+
+    if not is_own_worker_execution(execution):
+        return False
+    note_crewmate_worker_session(session_key)
+    return True
+
+
+def worker_session_spec(literal_base: dict[str, Any], session_key: str) -> dict[str, Any]:
+    """The spec a crewmate's worker session on *session_key* runs: base plus its kit.
+
+    The one harness-neutral seam for the worker kit. *literal_base* is the
+    source-defined worker spec with its prompt already literal (each harness
+    resolves the prompt its own way); the crewmate comes from the session's own
+    execution record, never from a name the session supplies, so the additions
+    are always the dispatching crewmate's own. With no record, or no member on
+    it, the result is the base under governance. A harness reads this through
+    its projection only when it can carry a per-session spec
+    (``ACP_BACKENDS_MATE_WORKER_KIT``); a worker allocated on any other backend
+    is refused before spawn, never run on the bare base. Blocking file I/O.
+    """
+    from kiro_crew.execution_context import read_session_execution
+
+    member_id: str | None = None
+    try:
+        execution = read_session_execution(session_key) if session_key else None
+    except Exception:  # noqa: BLE001 - an unreadable record adds nothing
+        logger.warning(
+            "worker session %s: execution record unreadable; projecting the worker base",
+            session_key,
+            exc_info=True,
+        )
+        execution = None
+    if execution is not None:
+        member_id = execution.member_id
+    return resolve_worker_spec(literal_base, member_id)
+
+
+def crewmate_worker_backend(agent_cfg: Any) -> str:
+    """The backend a crewmate's worker runs on: its crewmate's, through the one gate.
+
+    ``agent.member_acp_backend`` as the loader reads it (a stored ``kiro`` already
+    reads as KAS) crossed through ``resolve_selected_backend``, the same gate
+    ``members.select_provider_backend`` applies to the member route.
+    """
+    from kiro_crew.acp_backends import resolve_selected_backend
+
+    return resolve_selected_backend(getattr(agent_cfg, "member_acp_backend", ""))
+
+
+def worker_kit_backend_refusal(backend: str) -> str | None:
+    """Why a crewmate's worker cannot run on *backend*, or ``None`` when it can.
+
+    Opt-in membership (harness-parity H6): only a backend in
+    ``ACP_BACKENDS_MATE_WORKER_KIT`` carries the worker's per-session spec (its
+    kit, the crewmate's additions and the tools it switches off), so a worker on
+    any other backend would run the bare on-disk base with the crewmate's
+    restrictions lost. The text names the backends that can carry it.
+    """
+    from kiro_crew.acp_backends import ACP_BACKENDS_MATE_WORKER_KIT, backend_to_stored
+
+    if backend in ACP_BACKENDS_MATE_WORKER_KIT:
+        return None
+    able = ", ".join(sorted(backend_to_stored(b) for b in ACP_BACKENDS_MATE_WORKER_KIT))
+    return (
+        f"a crewmate's worker runs on its crewmate's backend "
+        f"({backend_to_stored(backend)}), which cannot carry the worker's own tools, "
+        f"servers and switched-off tools for one session; set agent.member_acp_backend "
+        f"to {able}"
+    )

@@ -104,7 +104,7 @@ describe('CrewProfileSettings permission', () => {
 
   it('says under the picker what the chosen mode lets the crewmate do', () => {
     setup(member())
-    expect(screen.getByTestId('crew-profile-settings')).toHaveTextContent('oncall runs tools without asking you first, in every chat with it. Pick Normal to approve each step.')
+    expect(screen.getByTestId('crew-profile-settings')).toHaveTextContent('oncall runs tools without asking you first, in every chat with it and in the work it hands to its worker. Pick Normal to approve each step.')
   })
 
   it('sends one compare-and-set write; the server moves the live thread', async () => {

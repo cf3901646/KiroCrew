@@ -1703,9 +1703,8 @@ async def _revalidate_crew_pin(
     the retained claude_code seam and a known wrong-flavour spelling -- so no probe
     is spent on a value the snapshot does not decide.
 
-    ``for_workers`` names the crew's ``worker_model``: the sessions a crewmate
-    dispatches run on ``agent.acp_backend`` (never a member DM), so that pin is
-    judged against the worker's harness rather than the member's.
+    ``for_workers`` names the crew's ``worker_model``: it is judged against the
+    harness the crewmate's worker runs on (``mate_worker.crewmate_worker_backend``).
     """
     if not model or model == "auto" or model_registry.acp_id_correction(model):
         return None
@@ -1714,8 +1713,9 @@ async def _revalidate_crew_pin(
         return None
     # circular import: see _model_pin_rejected.
     from kiro_crew.dashboard.handlers.core import _revalidate_role_pin_evidence
+    from kiro_crew.mate_worker import crewmate_worker_backend
 
-    backend = cfg.agent.acp_backend if for_workers else _pin_entitlement_backend(cfg)
+    backend = crewmate_worker_backend(cfg.agent) if for_workers else _pin_entitlement_backend(cfg)
     return await _revalidate_role_pin_evidence(model, request, backend=backend)
 
 

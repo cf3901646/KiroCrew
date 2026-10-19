@@ -586,11 +586,15 @@ else `agent.reasoning_effort`, else the model default), which is what the profil
 card's "No level set" names. An inherited pin is also dropped when it cannot
 follow the worker onto its harness (`_inherited_pin_foreign_to_child`): the
 crewmate's thread runs on `agent.member_acp_backend` and its own `model` was
-validated there, while the non-member child runs on `agent.acp_backend`, so that
-pin is dropped when the two harnesses disagree on model-id namespace; the
-profile's explicit `worker_model` is validated for the worker's harness
-(`PUT /api/agents/{name}` judges it against `agent.acp_backend`) and crosses
-freely. Either pin is dropped when the child's namespace advertises a list it is
+validated there, while a child that is not the crewmate's own worker runs on
+`agent.acp_backend`, so that pin is dropped when the two harnesses disagree on
+model-id namespace. The crewmate's own worker runs on the crewmate's backend
+(`mate_worker.crewmate_worker_backend`; crew-mode.md, "The worker runs on its
+crewmate's backend"), so its pins are judged there; the profile's explicit
+`worker_model` is validated for that harness (`PUT /api/agents/{name}`) and
+crosses freely. A conductor's hand-off whose worker backend cannot carry the
+worker's kit is refused `worker_kit_harness_unsupported` before anything is
+allocated. Either pin is dropped when the child's namespace advertises a list it is
 not on while another harness claims it; `"auto"` always passes. When the
 crewmate's own model is dropped, the crewmate's own effort that rode along for
 it is dropped too; an explicit `worker_reasoning_effort` stays. A caller whose record is a
@@ -751,7 +755,11 @@ records (see `crew-log-emitter.md`).
 trusted operator's dispatched worker does not stall on a prompt nobody is
 watching. This is the posture `parent_trusted` already gives a `spawn_run`
 subagent, which reads the parent's stored `"auto"` policy, so the same delegation
-behaves the same whether or not it gets a sidebar tab.
+behaves the same whether or not it gets a sidebar tab. A crewmate's own
+worker (the conductor's hand-off, `_hands_off_to_own_worker`) takes its
+posture from the crewmate's record instead: the Profile Permissions
+`approval_mode`, seeded through `crewmate_approval.seed_for_turn`, whatever the
+thread itself holds at that moment.
 No session-store write happens at creation: the child has no ACP session yet
 (`set_approval_policy` no-ops on a missing session), and `chat_runner` already
 derives the persistable policy from `_trust` on every session create/resume, so
@@ -775,7 +783,9 @@ Nothing about trust is persisted at birth. The birth metadata carries
 `tab_id`, `origin`, `created_at`, `workspace`, `agent`, `project`, `title`,
 `memory_mode`, and `folder_id` / `created_by` / `model` / `reasoning_effort` when
 set — no trust field — so a restart returns the child to interactive along with
-its creator.
+its creator. A crewmate's conductor chat and its workers are the exception: they
+are seeded again from the crewmate's record at the start of their next turn
+(see crew-mode.md, "Conductor and worker").
 
 The create's SEL record carries `agent`, `folder_id`, `model` and
 `reasoning_effort` (each empty when none was pinned), `inherited` (which of the

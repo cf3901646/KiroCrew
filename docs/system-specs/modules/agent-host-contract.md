@@ -107,6 +107,19 @@ validation strictness, whether bookkeeping may live in-spec, its
 shadowing/selection rules, its hook-event vocabulary, whether it can resolve an
 `"auto"` model, and its protocol-version shape.
 
+**A spec built for one session.** A crewmate's worker runs a spec built per
+session: the source-defined `kirocrew-mate-worker` base plus that crewmate's
+own additions and the tools it switches off (`mate_worker.worker_session_spec`,
+the one harness-neutral seam; crew-mode.md, "The worker runs on its crewmate's
+backend"). The rows above decide which host can carry that. KAS takes every
+agent over the wire per session, so its projection reads the seam. kiro-cli
+reads `--agent` off disk at spawn. The projecting hosts read their spec off disk
+by agent name and report `excludedTools` as a projection gap, so on them the
+crewmate's switched-off tools would come back. `ACP_BACKENDS_MATE_WORKER_KIT`
+(harness-parity.md) names the hosts that carry it, and a worker on any other host
+is refused before spawn rather than run on the bare base. A host joins the set by
+projecting the seam's spec for the worker session, its `excludedTools` withheld.
+
 ## 2. Session persistence
 
 | | kiro-cli | KAS | CC | Codex | OpenCode | Pi | goose | DeepSeek |
