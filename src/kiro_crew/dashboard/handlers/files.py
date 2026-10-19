@@ -85,6 +85,7 @@ from kiro_crew.dashboard.chat_persistence import rehydrate_slot_from_history_asy
 from kiro_crew.dashboard.chat_utils import (  # noqa: F401
     dashboard_slot_key,
     drained_to_thread,
+    effective_session_key,
     run_config_write,
 )
 from kiro_crew.dashboard.file_api import browse as _owner_browse
@@ -367,6 +368,7 @@ from kiro_crew.security import (  # noqa: F401
     redaction_switch,
     sandbox_credential_targets,
 )
+from kiro_crew.session_environment import session_runs_remotely  # noqa: F401
 from kiro_crew.validation import (  # noqa: F401
     FILE_READ_SCHEMA,
     MODEL_ID_RE,

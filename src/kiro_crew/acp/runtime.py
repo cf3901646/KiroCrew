@@ -14,6 +14,7 @@ AcpSessionHandle`` (and the exceptions) keeps working for existing callers and t
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import functools
 import importlib
 import logging
@@ -1080,6 +1081,102 @@ def _launch_tools() -> LaunchTools:
     )
 
 
+def _restricts_replaced_builtins(permissions: Any) -> bool:
+    """Whether a KAS ``permissions`` block limits a capability the workspace replaces.
+
+    A ``deny``, or a scoped ``ask``, on ``shell``/``fs_read``/``fs_write`` (or a
+    meta capability covering one). An unscoped ``ask`` is Crew's own hook hold,
+    which the gate keeps answering for workspace tools.
+    """
+    from kiro_crew.acp.kas_permissions import META_CAPABILITY_EXPANSION
+
+    rules = permissions.get("rules") if isinstance(permissions, dict) else None
+    for rule in rules if isinstance(rules, list) else ():
+        if not isinstance(rule, dict) or not isinstance(rule.get("capability"), str):
+            continue
+        covered = META_CAPABILITY_EXPANSION.get(rule["capability"], (rule["capability"],))
+        if not {"shell", "fs_read", "fs_write"} & set(covered):
+            continue
+        scoped = bool(rule.get("match") or rule.get("exclude"))
+        if rule.get("effect") == "deny" or (rule.get("effect") == "ask" and scoped):
+            return True
+    return False
+
+
+def _without_local_only_grants(grants: list[str]) -> list[str]:
+    """MCP grants for a remote session, minus every tool that acts on this machine.
+
+    The allowlist has no per-tool exclusion, so a whole ``@kirocrew-core`` grant
+    becomes one grant per non-local-only tool, named from the titles table that
+    ``test_mcp_tool_titles`` pins. Grants on a local-only server are dropped.
+    """
+    from kiro_crew.mcp_tool_titles import _table
+    from kiro_crew.session_directive import CORE_MCP_SERVER
+    from kiro_crew.session_environment import LOCAL_ONLY_CORE_TOOLS, LOCAL_ONLY_SERVERS
+
+    core_tools = sorted(set(_table().get(CORE_MCP_SERVER, {})) - LOCAL_ONLY_CORE_TOOLS)
+    out: list[str] = []
+    for grant in grants:
+        server, _, tool = grant[1:].partition("/")
+        if server in LOCAL_ONLY_SERVERS:
+            continue
+        if server == CORE_MCP_SERVER:
+            if not tool:
+                out.extend(f"@{CORE_MCP_SERVER}/{t}" for t in core_tools)
+                continue
+            if tool in LOCAL_ONLY_CORE_TOOLS:
+                continue
+            if "*" in tool or "?" in tool:
+                from kiro_crew.acp.kas_permissions import _mcp_pattern
+
+                if _mcp_pattern(grant) is not None:
+                    out.extend(
+                        f"@{CORE_MCP_SERVER}/{t}"
+                        for t in core_tools
+                        if fnmatch.fnmatchcase(t, tool)
+                    )
+                continue
+        out.append(grant)
+    return list(dict.fromkeys(out))
+
+
+#: Workspace tools standing in for each built-in, by kiro-cli name: only a write
+#: grant reaches writes, only a shell grant ``run_command``.
+#: ``test_remote_session_launch`` pins these to the guest server's tools.
+_WORKSPACE_TOOLS_BY_BUILTIN: dict[str, tuple[str, ...]] = {
+    "fs_read": ("read_file", "list_directory"),
+    "glob": ("glob",),
+    "grep": ("grep",),
+    "fs_write": ("write_file", "edit_file"),
+    "execute_bash": ("run_command",),
+}
+
+
+def _workspace_grants(server: str, grants: list[str]) -> list[str]:
+    """The ``@<server>`` grants giving a remote agent what its built-ins gave it.
+
+    ``@builtin`` becomes the whole server; each named built-in its workspace
+    tools (none for ``web_fetch``); a set covering every tool, the whole server.
+    """
+    from kiro_crew.acp.kas_permissions import KIRO_TOOL_ALIASES
+
+    tools: list[str] = []
+    for grant in grants:
+        if grant == "@builtin":
+            return [f"@{server}"]
+        if grant.startswith("@builtin/"):
+            grant = grant[len("@builtin/") :]
+        elif grant.startswith("@"):
+            continue
+        for tool in _WORKSPACE_TOOLS_BY_BUILTIN.get(KIRO_TOOL_ALIASES.get(grant, grant), ()):
+            if tool not in tools:
+                tools.append(tool)
+    every = {t for row in _WORKSPACE_TOOLS_BY_BUILTIN.values() for t in row}
+    if tools and set(tools) == every:
+        return [f"@{server}"]
+    return [f"@{server}/{tool}" for tool in tools]
+
+
 class AcpRuntime:
     """Owns one kiro-cli acp subprocess with single-reader demux.
 
@@ -1147,6 +1244,8 @@ class AcpRuntime:
         # read by the reader loop: a credential callback is answered from the
         # vault only on a process that was spawned expecting it.
         self._kas_host_auth = False
+        # Set for a remote session: built-in file/shell tools give way to the workspace server.
+        self._remote_workspace: Any = None
         # First answered credential callback per runtime is logged at INFO as a
         # positive "the engine is drawing its credential from Crew" signal; later
         # ones (the engine refreshes ahead of expiry) drop to DEBUG.
@@ -1899,6 +1998,106 @@ class AcpRuntime:
         self._native_launch_view_alias = None
         self._native_launch_resources = None
         return plan
+
+    def set_remote_workspace(self, launch: Any) -> None:
+        """Give this runtime's sessions a remote workspace instead of local files.
+
+        ``workspace`` is ``{"server": <mcpServers element>, "workdir": <guest path>}``.
+        The engine, Crew servers, credentials and approvals stay here; built-in
+        file and shell tools are unmounted for the workspace server. That fence
+        needs a host that sends the allowlist over the wire: KAS (positive identity).
+        """
+        self.check_remote_workspace_supported()
+        self._remote_workspace = launch
+
+    def check_remote_workspace_supported(self) -> None:
+        """Raise before any guest compute is touched when this runtime cannot fence it."""
+        from kiro_crew.agent_sdk.backends import ACP_BACKEND_KAS
+        from kiro_crew.session_environment import REMOTE_NEEDS_KAS
+
+        if self._process is not None:
+            raise AcpRuntimeError("a remote workspace must be set before the runtime spawns")
+        if self.acp_backend == ACP_BACKEND_KAS:
+            return
+        raise AcpRuntimeError(REMOTE_NEEDS_KAS)
+
+    async def _write_remote_token(self) -> None:
+        """Put the relay token in this runtime's private scratch and point the bridge at it."""
+        workspace = self._remote_workspace
+        if workspace is None or "write_token" not in workspace:
+            return
+        scratch = self.work_scratch_dir
+        if scratch is None:
+            raise AcpRuntimeError("a remote workspace needs this session's private scratch")
+        path = await asyncio.to_thread(workspace["write_token"], scratch)
+        server = workspace["server"]
+        args = list(server["args"])
+        args[args.index("--token-file") + 1] = str(path)
+        workspace["server"] = {**server, "args": args}
+
+    def _remote_session_servers(self, servers: list[Any]) -> list[Any]:
+        """The session's MCP array: unchanged, plus the remote workspace server."""
+        if self._remote_workspace is None:
+            return servers
+        from kiro_crew.session_environment import LOCAL_ONLY_SERVERS
+
+        entry = self._remote_workspace["server"]
+        # A local-only server (computer use) is not sent at all.
+        kept = [
+            s
+            for s in servers
+            if s.get("name") != entry["name"] and s.get("name") not in LOCAL_ONLY_SERVERS
+        ]
+        return kept + [entry]
+
+    def _remote_workspace_agents(self, agents: Any, servers: list[Any]) -> Any:
+        """Agent definitions with built-in tools unmounted for a remote workspace.
+
+        MCP grants survive; ``"*"`` becomes the servers sent. Every built-in acts
+        on this machine, so each is replaced by its workspace tools
+        (:func:`_workspace_grants`); an empty allowlist stays empty.
+        """
+        if self._remote_workspace is None or not agents:
+            return agents
+        name = self._remote_workspace["server"]["name"]
+        workdir = self._remote_workspace["workdir"]
+        notice = (
+            f"\n\nThis session's files and shell live in a remote workspace at {workdir}. "
+            f"Use the @{name} tools for every file and command; local file and shell "
+            "tools are not available."
+        )
+        out = []
+        for agent in agents:
+            # KAS judges workspace tools as `mcp`, so the agent's own shell and
+            # file restrictions would stop matching: refuse instead of dropping them.
+            if _restricts_replaced_builtins(agent.get("permissions")):
+                from kiro_crew.session_environment import REMOTE_AGENT_RESTRICTED
+
+                raise AcpRuntimeError(REMOTE_AGENT_RESTRICTED)
+            agent = dict(agent)
+            tools = agent.get("tools")
+            if tools == "*" or (isinstance(tools, list) and "*" in tools):
+                kept = [f"@{s['name']}" for s in servers if s.get("name")]
+            else:
+                # ``@builtin`` is the built-in tool set spelled like a server grant.
+                grants = [t for t in tools or [] if isinstance(t, str)]
+                kept = [t for t in grants if t.startswith("@") and not t.startswith("@builtin")]
+                for grant in _workspace_grants(name, grants):
+                    if grant not in kept:
+                        kept.append(grant)
+            agent["tools"] = _without_local_only_grants(kept)
+            excluded = agent.get("excludedTools")
+            if isinstance(excluded, list):
+                from kiro_crew.platform.tool_names import KIRO_CLI_NAME_BY_KAS_TOOL
+
+                entries = [t for t in excluded if isinstance(t, str)]
+                replacements = _workspace_grants(
+                    name, [KIRO_CLI_NAME_BY_KAS_TOOL.get(t, t) for t in entries]
+                )
+                agent["excludedTools"] = list(dict.fromkeys([*entries, *replacements]))
+            agent["prompt"] = str(agent.get("prompt") or "") + notice
+            out.append(agent)
+        return out
 
     async def _initialize_handshake(self, client_capabilities: dict[str, Any]) -> dict[str, Any]:
         """Send ``initialize`` with the cold-start budget.
@@ -7520,9 +7719,13 @@ class AcpRuntime:
         # unresolved-ref guard. The pre-filter roster is not that; a host that
         # narrows its array would otherwise be reported as having been sent servers
         # the wire never carried, and the guard would judge refs against them.
-        wire_servers = self._harness.session_mcp_servers(
-            mcp_servers, agent_capabilities=self._agent_capabilities
+        await self._write_remote_token()
+        wire_servers = self._remote_session_servers(
+            self._harness.session_mcp_servers(
+                mcp_servers, agent_capabilities=self._agent_capabilities
+            )
         )
+        kas_agents = self._remote_workspace_agents(kas_agents, wire_servers)
         params = build_session_new_params(
             session_work_dir,
             mcp_servers=wire_servers,
@@ -8442,8 +8645,11 @@ class AcpRuntime:
         # rejected array does not just fail to add tools -- it takes them away from
         # a conversation that already had them.
         # Bound once, for the same consumers as session/new: see the note there.
-        wire_servers = self._harness.session_mcp_servers(
-            mcp_servers, agent_capabilities=self._agent_capabilities
+        await self._write_remote_token()
+        wire_servers = self._remote_session_servers(
+            self._harness.session_mcp_servers(
+                mcp_servers, agent_capabilities=self._agent_capabilities
+            )
         )
         load_params: dict[str, Any] = {
             "sessionId": resume_sid,
@@ -8502,10 +8708,13 @@ class AcpRuntime:
             # wire_servers is what the stall diagnostic and the session report read.
             # Setting only load_params would leave both describing the pre-hoist roster
             # -- naming servers this resume did not send.
-            wire_servers = self._harness.session_mcp_servers(
-                mcp_servers, agent_capabilities=self._agent_capabilities
+            wire_servers = self._remote_session_servers(
+                self._harness.session_mcp_servers(
+                    mcp_servers, agent_capabilities=self._agent_capabilities
+                )
             )
             load_params["mcpServers"] = wire_servers
+            kas_agents = self._remote_workspace_agents(kas_agents, wire_servers)
             attach_kas_custom_agents(load_params, kas_agents)
         budget = await self._session_start_budget()
         self._session_inits_in_flight += 1

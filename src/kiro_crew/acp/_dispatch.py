@@ -84,6 +84,10 @@ from kiro_crew.metrics.tool_calls import (  # noqa: F401
 from kiro_crew.platform.tool_paths import WRITE_PLANE_KINDS  # noqa: F401
 from kiro_crew.security import redact_credentials, redact_exfiltration_urls
 from kiro_crew.security.credential_sources import tool_output_fingerprints  # noqa: F401
+from kiro_crew.session_environment import (  # noqa: F401
+    WORKSPACE_DENY_ALIASES,
+    WORKSPACE_TOOL_KINDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -686,6 +690,7 @@ if TYPE_CHECKING:  # names it serves from outside the family, from their homes
     import difflib  # noqa: F401
     import hashlib  # noqa: F401
     import json  # noqa: F401
+    import posixpath  # noqa: F401
     import re  # noqa: F401
     import unicodedata  # noqa: F401
     from collections.abc import (  # noqa: F401

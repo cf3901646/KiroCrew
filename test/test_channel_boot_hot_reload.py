@@ -1057,6 +1057,7 @@ class TestSlackApplierReconciles:
             "GatewayOrchestrator.channel_restart",
             "GatewayOrchestrator.slack",
             "GatewayOrchestrator.default_agent",
+            "GatewayOrchestrator.session_environments",
         }
 
 

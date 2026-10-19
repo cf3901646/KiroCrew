@@ -257,6 +257,24 @@ PREEXEC_EXEMPT: frozenset[str] = frozenset(
 # category breakdown and follow-up hardening candidates.
 BENIGN_SPAWNS: frozenset[str] = frozenset(
     {
+        # Coder lifecycle: resolved operator CLI, fixed verbs, saved template/preset
+        # and validated generated names; cwd the data home, stdin DEVNULL, no shell.
+        "coder/client.py::_run",
+        # Gateway transport: argv from the resolved CLI, saved deployment and
+        # validated workspace; the shell text is a quoted GUEST command and payloads
+        # ride stdin. Host credential isolation would prevent coder login.
+        "coder/remote_worker.py::run_collect",
+        # The fixed coder ssh attach argv plus a numeric port; stdin is framed bytes.
+        "remote_session/client.py::dial",
+        # asyncio.run drives the CLI loop in-process; it is not a child spawn.
+        "remote_session/client.py::main",
+        "remote_session/worker.py::main",
+        # Guest-script rule, per execution function: these stdlib-only files run
+        # inside the remote workspace, never on the gateway, so the guest is the
+        # isolation boundary and the gateway sandbox is unavailable.
+        "remote_session/worker.py::run",
+        "remote_session/workspace_tools.py::run_command",
+        "remote_session/workspace_tools.py::_git_status",
         "acp/runtime_process_tree.py::_get_rss_mb",
         # The spawn primitive for three fixed-argv kiro-cli one-shots
         # (`chat --list-models`, `whoami`, the `/usage` scrape). Every caller has

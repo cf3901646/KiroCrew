@@ -326,6 +326,8 @@ from kiro_crew.config.sections_session import (  # noqa: F401
     KiroCrewAgentConfig,
     ResolvedBindings,
     SessionConfig,
+    SessionEnvironmentProfileConfig,
+    SessionEnvironmentsConfig,
     WorkspaceConfig,
     _archive_retention_days,
     _migrate_workspaces,

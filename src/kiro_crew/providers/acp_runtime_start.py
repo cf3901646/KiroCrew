@@ -184,6 +184,22 @@ def _name_credential_mask(runtime: object, exc: BaseException) -> None:
         exc.args = (named,)
 
 
+def _choices_file_may_exist() -> bool:
+    """Whether session choices may be on disk; a check that fails counts as yes.
+    Never while the developer flag is off: then every session runs here."""
+    from kiro_crew.session_environment import choices_path, session_environments_enabled
+
+    if not session_environments_enabled():
+        return False
+    try:
+        choices_path().stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return True
+
+
 async def _start_kiro_runtime(self: AcpProvider) -> None:
     """Spawn an AcpRuntime + session; time the kiro cold-start split.
 
@@ -215,6 +231,11 @@ async def _start_kiro_runtime(self: AcpProvider) -> None:
         outcome = "auth_required"
         raise
     finally:
+        # A remote start's stage ends with the start, so a Stop never leaves one stale.
+        from kiro_crew.session_environment import clear_start_stage
+
+        key = meta.get("session_key")
+        clear_start_stage(key if isinstance(key, str) else None)
         self._emit_kiro_startup_metric(t0, phases, outcome, meta)
 
 
@@ -532,6 +553,60 @@ async def _start_kiro_runtime_impl(
     # One priority for both start queues this path enters, set by the session
     # layer for this start (rule: ``kiro_crew.start_priority``).
     start_priority = self.start_priority
+    # Persisted choices, including inherited subagent choices, outlive configuration.
+    from kiro_crew.coder.session_launch import prepare_for_session
+    from kiro_crew.config import live
+    from kiro_crew.config.loader import KiroCrewConfig
+    from kiro_crew.session_environment import report_start_stage, session_environments_enabled
+
+    config = live.snapshot()
+    if config is None:
+        config = await asyncio.to_thread(KiroCrewConfig.load)
+    section = config.session_environments
+    remote = (
+        await prepare_for_session(
+            session_key, before_compute=runtime.check_remote_workspace_supported
+        )
+        if session_environments_enabled()
+        and (
+            bool(section.coder_url or section.profiles)
+            or await asyncio.to_thread(_choices_file_may_exist)
+        )
+        else None
+    )
+
+    async def attach_remote_workspace(target: AcpRuntime) -> None:
+        # A fresh guest worker per runtime: the bridge spends its one-use secret.
+        assert remote is not None
+        target.check_remote_workspace_supported()
+        report_start_stage(session_key, "connecting")
+        server = await remote.launch.workspace_server(remote.workdir)
+        target.set_remote_workspace(
+            {
+                "server": server,
+                "workdir": remote.workdir,
+                "write_token": remote.launch.relay.write_token,
+            }
+        )
+        report_start_stage(session_key, "starting_agent")
+
+    from kiro_crew.session_environment import (
+        forget_remote_workspace,
+        remember_remote_workspace,
+    )
+
+    if remote is not None:
+        await attach_remote_workspace(runtime)
+        # Per-message context names the guest directory, not the gateway project.
+        remember_remote_workspace(session_key, remote.profile_name, remote.workdir)
+        if remote.created and getattr(self._client, "_resume_session_id", None):
+            # A conversation that already ran got a new, empty workspace.
+            from kiro_crew.session_environment import mark_workspace_recreated
+
+            mark_workspace_recreated(session_key)
+    else:
+        forget_remote_workspace(session_key)
+    session_cwd: str | Path = work_dir
     _t_spawn = time.monotonic()
     try:
         await runtime.spawn(
@@ -570,6 +645,9 @@ async def _start_kiro_runtime_impl(
     finally:
         # subprocess launch + ACP `initialize` handshake
         phases["spawn_init"] = (time.monotonic() - _t_spawn) * 1000.0
+        if remote is not None:
+            # Closed once this runtime ends (at once if the spawn failed).
+            remote.launch.close_relay_when_ended(runtime.is_alive)
 
     # Everything AFTER a successful spawn() must be guarded: until the
     # AcpSessionProvider is constructed and assigned to self._client, NOTHING
@@ -626,7 +704,7 @@ async def _start_kiro_runtime_impl(
                         runtime,
                         str(session_file) if session_file else "",
                         resume_sid,
-                        work_dir,
+                        session_cwd,
                         agent,
                         member_session_key=self._member_session_key(),
                         session_key=self._owning_session_key(),
@@ -682,6 +760,8 @@ async def _start_kiro_runtime_impl(
                     # joins it (above): its sessions' work is there.
                     shared_scratch=self._shared_scratch or runtime.work_scratch_dir,
                 )
+                if remote is not None:
+                    await attach_remote_workspace(runtime)
                 try:
                     await runtime.spawn(
                         start_priority=start_priority,
@@ -700,9 +780,12 @@ async def _start_kiro_runtime_impl(
                     if self._client.backend in ADAPTER_EXPOSED_CREDENTIAL_LEAVES:
                         _name_credential_mask(runtime, exc)
                     raise
+                finally:
+                    if remote is not None:
+                        remote.launch.close_relay_when_ended(runtime.is_alive)
             try:
                 handle = await runtime.create_session(
-                    cwd=work_dir,
+                    cwd=session_cwd,
                     agent=agent or None,
                     member_session_key=self._member_session_key(),
                     memory_mode=self.memory_mode,
