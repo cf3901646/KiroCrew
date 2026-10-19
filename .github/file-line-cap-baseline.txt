@@ -31,13 +31,10 @@
 2818 src/kiro_crew/dashboard/server.py
 2795 src/kiro_crew/deploy/handlers.py
 2129 src/kiro_crew/members.py
-2646 src/kiro_crew/pinned_fs.py
-2787 src/kiro_crew/portability.py
 2284 src/kiro_crew/sandbox_launcher_program.py
 3181 src/kiro_crew/security_posture.py
 3685 src/kiro_crew/slack/events.py
 3892 src/kiro_crew/slack/interactions.py
-2594 src/kiro_crew/subagent_persistence.py
 2641 test/conftest.py
 2475 test/test_chat_mirror.py
 10498 test/test_cli.py
