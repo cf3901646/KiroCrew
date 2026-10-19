@@ -150,6 +150,14 @@ your own verdict. The `dashboard_save` reply lists every field with its source
 and names the hand-written ones under `manual_fields`, so you can see which
 cells go stale the moment you stop writing them.
 
+Two checks the gateway makes on every save, because the page run is skipped on
+a machine with no browser (the reply's `verification.note` then says nothing
+was checked): `shape_warnings` names each list, record or time you bound to a
+`data-dashboard-field` cell, which shows it raw (`[]`, an ISO string), so draw
+it in your script (`dashboard_types` and `dashboard_fields` carry `rendering`
+for each type); `theme_warnings` says your fixed colours cover one colour
+scheme only, so the page is unreadable in the other.
+
 ### A look that belongs to the work
 
 Take the page's look from your own context: the project you work on (its

@@ -1872,3 +1872,27 @@ def test_only_a_save_of_a_written_page_can_start_a_check():
         if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "_page_check"
     }
     assert starters == {"api_dashboard_save"}
+
+
+async def test_a_skipped_run_says_so_and_the_gateway_checks_shapes_and_schemes(monkeypatch, store):
+    """No browser on the host: the reply says the page was NOT run, and the two checks
+    the gateway does itself still come back -- a list bound to a text cell, and a theme
+    that fixes the text colour for one scheme only (round-5 Cove)."""
+    from kiro_crew.dashboard.handlers import member_dashboard_fields
+
+    skipped = _verdict("skipped", reason="no browser on this host", data=None)
+    monkeypatch.setattr(member_dashboard_fields, "verify_package_page", lambda *_a, **_k: skipped)
+    body = _html_body()
+    body["model"]["types"]["open_prs"] = {"type": "array", "source": {"agentic": True}}
+    body["theme"] = {"tokens": {"--panel-fg": "#eeeeee"}}
+
+    async with _client(monkeypatch) as client:
+        resp = await _save(client, body)
+        payload = await resp.json()
+
+    assert resp.status == 200, payload
+    note = payload["verification"]["note"]
+    assert "NOT run" in note and "no browser on this host" in note
+    assert [w.split(" ", 3)[:3] for w in payload["shape_warnings"]] == [["open_prs", "is", "array"]]
+    assert len(payload["theme_warnings"]) == 1
+    assert {"field": "open_prs", "source": "manual", "type": "array"} in payload["fields"]

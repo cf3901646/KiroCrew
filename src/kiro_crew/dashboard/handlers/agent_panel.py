@@ -46,6 +46,11 @@ from kiro_crew.crew_log import projection
 from kiro_crew.crew_log.entry_types import PANEL_FOLD_NAME
 from kiro_crew.dashboard.handlers._shared import _is_restricted_session
 from kiro_crew.dashboard.handlers.cron import _recognize_session
+from kiro_crew.dashboard.handlers.dashboard_page_checks import (
+    page_rendering,
+    shape_warnings,
+    theme_warnings,
+)
 from kiro_crew.dashboard.handlers.members import (
     _deny_app_caller,
     _member_names_for_slug,
@@ -1720,7 +1725,9 @@ async def api_dashboard_fields(request: web.Request) -> web.Response:
             slug=slug,
         )
     )
-    return web.json_response(payload)
+    # How a page draws the types a text cell shows raw, on the read an agent makes
+    # before it writes or rebuilds a page.
+    return web.json_response({**payload, "rendering": page_rendering()})
 
 
 async def api_dashboard_types(request: web.Request) -> web.Response:
@@ -1749,7 +1756,7 @@ async def api_dashboard_types(request: web.Request) -> web.Response:
     state: DashboardState = request.app["state"]
     unit = _session_unit(state, request.headers.get("X-Session-Key", ""))
     reached = await asyncio.to_thread(_folded_through, slot, unit)
-    return web.json_response(dashboard_types.describe(reached))
+    return web.json_response({**dashboard_types.describe(reached), "rendering": page_rendering()})
 
 
 def _folded_through(slot: str, unit: str) -> dict[str, int | None]:
@@ -2271,8 +2278,16 @@ async def api_dashboard_save(request: web.Request) -> web.Response:
 
     # After saving, so a page that throws is still saved and one more save fixes it.
     verification = await _page_check(slug, crew_name, slot, saved_package)
+    if isinstance(verification, dict) and verification.get("status") == "skipped":
+        # A skipped run checked nothing: said in so many words, so the crewmate does not
+        # read "verification" as a pass on a host with no browser.
+        verification["note"] = _crewmate_prompts.fill(
+            "dashboard.verification_skipped", reason=verification.get("reason") or "no reason given"
+        )
     sources = field_sources(saved_package)
     manual = [row["field"] for row in sources if row["source"] == "manual"]
+    shapes = shape_warnings(saved_package)
+    themes = theme_warnings(saved_package)
 
     # NO BROADCAST: the page in force has not changed. `dashboard_apply` puts it live.
     return web.json_response(
@@ -2290,6 +2305,10 @@ async def api_dashboard_save(request: web.Request) -> web.Response:
                 if manual
                 else {}
             ),
+            # Checked here, by the gateway, because the page run above is skipped on a
+            # host with no browser: a list bound to a text cell, a theme for one scheme.
+            **({"shape_warnings": shapes} if shapes else {}),
+            **({"theme_warnings": themes} if themes else {}),
             "next": "dashboard_apply puts this page live on your Dashboard as a new version",
         }
     )
@@ -2312,7 +2331,8 @@ def field_sources(package: Mapping[str, Any]) -> list[dict[str, str]]:
             where = f"fold:{source['fold']}" + (f".{path}" if path else "")
         else:
             where = "manual"
-        out.append({"field": str(name), "source": where})
+        kind = spec.get("type") if isinstance(spec, Mapping) else None
+        out.append({"field": str(name), "source": where, "type": str(kind or "")})
     return out
 
 

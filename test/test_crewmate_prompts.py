@@ -32,6 +32,7 @@ ASSEMBLERS = (
     "mate_capability_catalog.py",
     "crewmate_worktree.py",
     "dashboard/handlers/agent_panel.py",
+    "dashboard/handlers/dashboard_page_checks.py",
     "dashboard/goal_reminder.py",
     "dashboard/goal_setup.py",
     "dashboard/mate_welcome.py",

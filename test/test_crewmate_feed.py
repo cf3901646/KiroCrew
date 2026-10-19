@@ -218,9 +218,9 @@ def test_a_save_reply_lists_each_field_with_its_source_and_flags_the_manual_ones
         }
     }
     assert agent_panel.field_sources(package) == [
-        {"field": "milestones", "source": "fold:goal.milestones"},
-        {"field": "waiting", "source": "fold:waiting.count"},
-        {"field": "verdict", "source": "manual"},
+        {"field": "milestones", "source": "fold:goal.milestones", "type": "array"},
+        {"field": "waiting", "source": "fold:waiting.count", "type": "number"},
+        {"field": "verdict", "source": "manual", "type": "string"},
     ]
 
 

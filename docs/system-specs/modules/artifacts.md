@@ -1460,6 +1460,20 @@ and no WebRTC. A library the page loads from the CDN allowlist is therefore not 
 and a page whose script stops at that library's undefined name is `skipped` and not
 `failed` (any other error is still `failed`).
 
+A `skipped` result carries a `note` saying in words that nothing was run or
+checked (`crewmate_prompts.json` `dashboard.verification_skipped`). Two checks
+the gateway makes itself, on the package text, ride the same reply whatever the
+run did (`dashboard/handlers/dashboard_page_checks.py`); neither refuses the save.
+`shape_warnings` names each `array`, `object` or `timestamp` field the page binds
+with `data-dashboard-field`, because the host fills that cell as text and shows
+`[]` or a raw ISO string; each field row in `fields` carries its `type`, and
+`dashboard_types` and `dashboard_fields` carry the same `rendering` advice per
+type. `theme_warnings` fires when the fixed (literal) colours in the theme
+tokens, `theme.css` and the page's own `<style>` set a foreground without an
+opaque background, or the reverse, and nothing names both schemes
+(`prefers-color-scheme`, `light-dark(`, `data-mode`, `data-theme`): such a page
+reads in one scheme and not the other.
+
 It costs the gateway little by construction. It runs only for a save of `view.html`,
 never for a write, a preview, an apply or a page load. One check runs at a time across
 the gateway: a save that finds one running, or the machine short of memory
