@@ -323,6 +323,110 @@ def test_a_parent_end_or_stage_cancel_tombstone_settles_the_row_cancelled(
         s.close()
 
 
+# ── an unleased retry_wait row whose run already ended ────────────────────────
+
+
+def _park_released_start(path: Path, clock: Clock, task_id: str, *, session_key: str) -> int:
+    """A start the claimer took and gave back: ``starting -> retry_wait``, no lease.
+
+    The shape a dropped user stop leaves behind: the row is parked for a
+    re-dispatch while the run's own record already says how it ended. Returns
+    the row's generation after the park.
+    """
+    s = TaskStore(path, clock=clock, network_fs=False).open()
+    s.accept([_rec(task_id, session_key=session_key)])
+    g = s.claim(task_id).generation
+    s.transition(task_id, model.STARTING, generation=g)
+    assert s.transition(task_id, model.RETRY_WAIT, generation=g, next_run_at=None)
+    row = s.get(task_id)
+    assert row.state == model.RETRY_WAIT and row.lease_owner is None
+    s.close()
+    return row.generation
+
+
+def test_an_unleased_retry_wait_row_whose_run_was_stopped_is_cancelled_at_boot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clock: Clock
+) -> None:
+    """The stranded row a dropped Stop leaves: ``retry_wait``, no lease, a due
+    time hours past, and a tombstone that records the stop. The boot reconcile
+    settles it ``cancelled``, so the parent's pending count (what the
+    attached-children guard reads) drops to zero instead of answering 409 on
+    every turn until someone edits the store by hand."""
+    import kiro_crew.subagent_persistence as sp
+    from kiro_crew.subagent_manager.admission.taskq_bridge import _TaskqBridgeMixin
+
+    monkeypatch.setattr(sp, "_SUBAGENTS_DIR", tmp_path / "subagents")
+    folder = tmp_path / "subagents" / "rw000001"
+    _write_json(folder / "state.json", {"id": "rw000001", "task": "t"})
+    _write_json(folder / "tombstone.json", {"cause": "user_stop", "outcome": "stopped"})
+    path = tmp_path / "tasks.db"
+    _park_released_start(path, clock, "rw000001", session_key="parent-slot")
+    clock.t += 6 * 3600
+
+    s = _crash_and_reopen(path, clock)
+    try:
+        assert s.count_pending(model.KIND_SUBAGENT, session_key="parent-slot") == 1
+        report = reconcile_on_boot(s, artifact_probe=_TaskqBridgeMixin.taskq_artifact_probe)
+        assert s.state_of("rw000001") == model.CANCELLED
+        assert report.settled_cancelled == 1 and report.errors == []
+        assert s.count_pending(model.KIND_SUBAGENT, session_key="parent-slot") == 0
+        assert s.claim("rw000001") is None
+    finally:
+        s.close()
+
+
+@pytest.mark.parametrize(
+    "verdict, expected",
+    [
+        (model.FAILED, model.FAILED),
+        (model.CANCELLED, model.CANCELLED),
+        # ``retry_wait -> done`` is closed in the transition table, so a parked
+        # row is never settled ``done`` from its artifacts.
+        (model.DONE, model.RETRY_WAIT),
+        # A run that began and recorded no ending, or artifacts that say
+        # nothing: the row stays its dispatcher's.
+        ("started", model.RETRY_WAIT),
+        (None, model.RETRY_WAIT),
+    ],
+)
+def test_an_unleased_retry_wait_row_settles_only_on_an_ending_its_state_accepts(
+    tmp_path: Path, clock: Clock, verdict: str | None, expected: str
+) -> None:
+    path = tmp_path / "t.db"
+    gen = _park_released_start(path, clock, "rw000002", session_key="parent-slot")
+    s = _crash_and_reopen(path, clock)
+    try:
+        reconcile_on_boot(s, artifact_probe=lambda r: verdict)
+        row = s.get("rw000002")
+        assert row.state == expected
+        if expected == model.RETRY_WAIT:
+            assert row.generation == gen and row.lease_owner is None
+    finally:
+        s.close()
+
+
+def test_a_retry_wait_probe_that_raises_leaves_its_row_and_settles_the_rest(
+    tmp_path: Path, clock: Clock
+) -> None:
+    path = tmp_path / "t.db"
+    _park_released_start(path, clock, "rw_raise", session_key="p")
+    _park_released_start(path, clock, "rw_stop", session_key="p")
+
+    def probe(rec: model.TaskRecord) -> str | None:
+        if rec.id == "rw_raise":
+            raise OSError("tombstone directory is unreadable")
+        return model.CANCELLED
+
+    s = _crash_and_reopen(path, clock)
+    try:
+        report = reconcile_on_boot(s, artifact_probe=probe)
+        assert [e.split(":")[0] for e in report.errors] == ["rw_raise"]
+        assert s.state_of("rw_raise") == model.RETRY_WAIT
+        assert s.state_of("rw_stop") == model.CANCELLED
+    finally:
+        s.close()
+
+
 # ── legacy import ─────────────────────────────────────────────────────────────
 
 

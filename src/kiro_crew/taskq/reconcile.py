@@ -19,6 +19,15 @@ dispatcher takes a single new row, each of those is examined once:
 
 ``cancelled`` and the other terminal states are never touched: a cancel that
 landed before the crash stays a cancel, whatever the artifacts say.
+
+An unleased ``retry_wait`` row is claimable and normally its dispatcher's, so
+it is examined for ONE thing: an ending its artifacts prove that the
+transition table accepts from ``retry_wait`` (``failed``, ``cancelled``). Such
+a row is a run whose own terminal write was lost -- a Stop whose cancel was
+dropped -- and left alone it stays in its parent's pending count, so the
+attached-children guard never clears. Every other verdict leaves the row as
+it is: ``retry_wait -> done`` is closed on purpose, and a run that began and
+recorded no ending is the dispatcher's to re-run.
 """
 
 from __future__ import annotations
@@ -36,6 +45,7 @@ from .model import (
     QUEUED,
     RECOVERING,
     RECOVERY_MAX_ATTEMPTS,
+    RETRY_WAIT,
     SIDE_EFFECT_UNKNOWN,
     UNKNOWN_SIDE_EFFECT,
     TaskRecord,
@@ -58,10 +68,16 @@ STARTED = "started"
 #: Kinds the running gateway can re-dispatch from a stored row today.
 DEFAULT_RECOVERY_ADAPTERS: frozenset[str] = frozenset({KIND_SUBAGENT})
 
+#: Rows per read of the ``retry_wait`` pass. The pass reads every page before it
+#: writes, so a row it settles cannot shift a later page past a row unread.
+_PARKED_PAGE = 500
+
 
 @dataclass
 class ReconcileReport:
     examined: int = 0
+    #: unleased ``retry_wait`` rows read for an ending (not in ``examined``).
+    parked_examined: int = 0
     settled_done: int = 0
     settled_failed: int = 0
     settled_cancelled: int = 0
@@ -100,7 +116,9 @@ def reconcile_on_boot(
     """Settle the rows an earlier incarnation left active. Idempotent.
 
     Only rows NOT leased by this incarnation are examined, so calling it again
-    after the dispatcher has started leaves the live rows alone.
+    after the dispatcher has started leaves the live rows alone. An unleased
+    ``retry_wait`` row is settled only on an ending its artifacts prove, which a
+    live run has not recorded.
     """
     probe = artifact_probe or _no_probe
     known = frozenset(adapters)
@@ -112,11 +130,19 @@ def reconcile_on_boot(
             _settle_one(store, rec, probe, known, ts, report)
         except TaskStoreUnavailable as exc:
             report.errors.append(f"{rec.id}: {exc}")
-    if report.examined:
+    for rec in _unleased_parked_rows(store, report):
+        report.parked_examined += 1
+        try:
+            _settle_parked(store, rec, probe, report)
+        except TaskStoreUnavailable as exc:
+            report.errors.append(f"{rec.id}: {exc}")
+    if report.examined or report.parked_examined:
         logger.info(
-            "taskq reconcile: examined=%d done=%d failed=%d cancelled=%d requeued=%d "
-            "recovering=%d unknown_side_effect=%d awaiting_adapter=%d errors=%d",
+            "taskq reconcile: examined=%d parked_examined=%d done=%d failed=%d "
+            "cancelled=%d requeued=%d recovering=%d unknown_side_effect=%d "
+            "awaiting_adapter=%d errors=%d",
             report.examined,
+            report.parked_examined,
             report.settled_done,
             report.settled_failed,
             report.settled_cancelled,
@@ -129,6 +155,65 @@ def reconcile_on_boot(
     return report
 
 
+def _verdict(rec: TaskRecord, probe: ArtifactProbe, report: ReconcileReport) -> str | None:
+    """The probe's verdict on *rec*; ``None`` when the probe raised."""
+    try:
+        return probe(rec)
+    except Exception as exc:  # noqa: BLE001 - a probe that cannot answer says nothing
+        # The probe is the caller's callable and ``None`` is already its "the
+        # artifacts say nothing" answer, so an exception is that answer for THIS
+        # row: settling it by class is safe (``unknown`` never re-runs), while
+        # unwinding would abandon every row behind it with no later sweep.
+        report.errors.append(f"{rec.id}: artifact probe failed: {exc}")
+        return None
+
+
+def _unleased_parked_rows(store: TaskStore, report: ReconcileReport) -> list[TaskRecord]:
+    """Every ``retry_wait`` row with no lease, read in full before any write."""
+    rows: list[TaskRecord] = []
+    offset = 0
+    while True:
+        try:
+            page = store.list_rows(state=RETRY_WAIT, limit=_PARKED_PAGE, offset=offset)
+        except TaskStoreUnavailable as exc:
+            report.errors.append(f"retry_wait scan: {exc}")
+            break
+        rows.extend(r for r in page if r.lease_owner is None)
+        if len(page) < _PARKED_PAGE:
+            break
+        offset += len(page)
+    return rows
+
+
+def _settle_parked(
+    store: TaskStore, rec: TaskRecord, probe: ArtifactProbe, report: ReconcileReport
+) -> None:
+    """Settle an unleased ``retry_wait`` row whose artifacts prove it ended.
+
+    Only the endings ``retry_wait`` has an edge to are written, each fenced on
+    the state and generation this pass read. ``done`` is not one of them, and
+    ``started`` or no verdict leaves the row claimable for its dispatcher.
+    """
+    verdict = _verdict(rec, probe, report)
+    if verdict == FAILED:
+        if store.transition(
+            rec.id, FAILED, generation=rec.generation, detail={"reconciled": "artifact"}
+        ):
+            report.settled_failed += 1
+        return
+    if verdict == CANCELLED:
+        if (
+            store.cancel(
+                rec.id,
+                reason="reconciled: tombstone",
+                only_from=frozenset({RETRY_WAIT}),
+                generation=rec.generation,
+            )
+            is not None
+        ):
+            report.settled_cancelled += 1
+
+
 def _settle_one(
     store: TaskStore,
     rec: TaskRecord,
@@ -137,15 +222,7 @@ def _settle_one(
     now: float,
     report: ReconcileReport,
 ) -> None:
-    try:
-        verdict = probe(rec)
-    except Exception as exc:  # noqa: BLE001 - a probe that cannot answer says nothing
-        # The probe is the caller's callable and ``None`` is already its "the
-        # artifacts say nothing" answer, so an exception is that answer for THIS
-        # row: settling it by class is safe (``unknown`` never re-runs), while
-        # unwinding would abandon every row behind it with no later sweep.
-        report.errors.append(f"{rec.id}: artifact probe failed: {exc}")
-        verdict = None
+    verdict = _verdict(rec, probe, report)
     if verdict == DONE:
         if store.transition(rec.id, DONE, detail={"reconciled": "artifact"}):
             report.settled_done += 1

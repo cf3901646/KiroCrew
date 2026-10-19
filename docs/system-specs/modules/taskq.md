@@ -1215,7 +1215,7 @@ rows this incarnation has since claimed are skipped.
 | class `unknown` | `unknown_side_effect` |
 | class `none` / `idempotent_key` | `recovering`, `next_run_at = now + backoff(attempts)` (`2·2^attempts`, cap 120s); the dispatcher re-claims it. A row this table already sent to `recovering` `model.RECOVERY_MAX_ATTEMPTS` (3) times goes to `failed` instead, with `reconciled: lost_owner_limit`, the count and a readable `error` on its transition event, so a run that takes its gateway down cannot restart it on every boot. The count is `store.lost_owner_recoveries`, read from the row's `reconciled: lost_owner` transitions into `recovering`, never `attempts`, which also counts `retry_wait` re-dispatches |
 
-The reconciler deliberately still examines only `ACTIVE` rows: it is
+The reconciler deliberately still settles by class only `ACTIVE` rows: it is
 kind-agnostic, and a CLAIMABLE row is normally its dispatcher's — a `queued`
 `subagent` row is exactly what the window refill exists to pick up. The
 `queued` rows of a kind with NO dispatcher are therefore the kind-scoped
@@ -1223,6 +1223,17 @@ adopter's half of the job (§ Runner adapters, `adopt_orphaned_rows`), and the
 two are complementary rather than overlapping: the adopter also picks up the
 row this table just requeued from `admitted`, which for such a kind would
 otherwise sit claimable with nothing to claim it.
+
+One CLAIMABLE state gets a second, narrower pass: every `retry_wait` row with
+no lease is read (all pages first, then the writes, counted in
+`ReconcileReport.parked_examined`) for an ending its artifacts prove that the
+table accepts from `retry_wait`. `failed` and `cancelled` settle the row, each
+fenced on the state and generation the pass read; `done` does not
+(`retry_wait -> done` is closed), and `started` or no verdict leaves the row to
+its dispatcher. This is the row a lost terminal write leaves behind — a Stop
+whose cancel was dropped, with the tombstone already recording the stop — and
+`count_pending` keeps counting it, so without the pass the parent's
+attached-children guard answers `409 slot_subagents_running` on every turn.
 
 ## Waits (`waits.py`)
 
@@ -1313,7 +1324,7 @@ a parked row, the boot `rebuild`, the runner's own waits -- lands in
 at once, so the dispatcher (or the runner's `_resume_after_wait` → `admit` →
 `claim`) writes `running` when capacity is actually granted. A crash in the gap
 leaves a claimable row (`retry_wait` is not ACTIVE, so the boot reconciler
-leaves it alone) instead of a dead-owner `running` row that reconciles to
+settles it only on an ending its artifacts prove) instead of a dead-owner `running` row that reconciles to
 `unknown_side_effect`. For a LIVE parent whose last child ended,
 `on_child_terminal(defer_wake=True)` records `children_settled` and leaves the
 row `waiting_children` until `resume_grant`. `answer_input` stores the answer
