@@ -59,6 +59,8 @@ AGENT = "agent"
 TRUST = "trust"
 #: The ``/kirocrew`` sub-commands a code channel answers itself.
 _APP_SUBCOMMANDS = frozenset({AGENT, TRUST})
+#: Each sub-command's denial reason on the ``slack.code_channel.command`` row.
+_REFUSED_REASON = {AGENT: "agent change refused", TRUST: "approval mode change refused"}
 
 _COMMANDS: dict[str, dict[str, str]] = {
     SUMMARIZE: {
@@ -354,7 +356,7 @@ async def handle_slash(
             orch, binding, user, team, f"channel={channel} user={user} via=command"
         )
         if refusal is not None:
-            surface.audit(user, operation, "denied", resources, f"/{command} change refused")
+            surface.audit(user, operation, "denied", resources, _REFUSED_REASON[command])
             if refusal:
                 await respond(refusal)
             return True

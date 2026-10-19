@@ -254,6 +254,14 @@ def test_a_non_owner_command_is_refused(chan: Any) -> None:
     replies = _run_slash(chan, "trust all", user=STRANGER)
     assert _mode_of(chan.slot) == "normal" and chan.mode_rows == []
     assert replies == [approval_picker.NOT_ALLOWED_TEXT]
+    row = chan.sel.ops("slack.code_channel.command")[-1]
+    assert (row["outcome"], row["error"]) == ("denied", "approval mode change refused")
+
+
+def test_the_agent_commands_denial_row_is_unchanged(chan: Any) -> None:
+    _run_slash(chan, "agent builder", user=STRANGER, trigger="T-agent")
+    row = chan.sel.ops("slack.code_channel.command")[-1]
+    assert (row["outcome"], row["error"]) == ("denied", "agent change refused")
 
 
 def test_trust_outside_a_code_channel_is_not_ours(chan: Any) -> None:
