@@ -2228,7 +2228,10 @@ draft guard, so a veto neither remounts the card nor loses its pushed form.
   `REQ_CARD_KEY_RESULTS_APPLY`; a Goals-tab edit and an Undo do not) always
   sends a second hidden turn, `[Milestones confirmed]`, the same way, listing
   each milestone with the goals it serves: with no
-  check-in on it offers them with `set_check_ins`, otherwise it says what the
+  check-in on it offers them with `set_check_ins` (the Daily Goal Reminder, the
+  Weekly report, the Monthly review, and the Heartbeat, which is off by default:
+  a wake every so often that keeps the work moving while the user is away, the
+  chat quiet and the Dashboard tab showing what it did), otherwise it says what the
   crewmate works on first.
 - the **`crewmate.check_ins` card** (`set_check_ins`): turns the Daily Goal
   Reminder, Weekly report, Monthly review and Heartbeat on or off and sets
