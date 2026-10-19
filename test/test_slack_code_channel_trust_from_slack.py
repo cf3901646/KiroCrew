@@ -385,3 +385,33 @@ def test_trust_on_a_card_whose_prompt_is_gone_changes_no_mode(chan: Any) -> None
     assert asyncio.run(approval_picker.handle_trust_call(chan.orch, _click(OWNER, ts)))
     assert chan.slot._trust is False
     assert _decisions(chan)[-1]["outcome"] == "denied"
+
+
+def test_a_channel_card_spent_inside_the_mode_change_grants_nothing(
+    chan: Any, monkeypatch: Any
+) -> None:
+    """The prompt is answered during apply_approval_mode's own await (a declared override)."""
+    import time
+
+    ts = _post_card(chan)
+
+    async def click() -> asyncio.Future:
+        fut = asyncio.get_running_loop().create_future()
+        chan.slot._approval_futures[REQUEST] = fut
+
+        def spend() -> None:
+            fut.get_loop().call_soon_threadsafe(fut.set_result, "rejected")
+            time.sleep(0.05)
+
+        override = SimpleNamespace(
+            is_declared=True, deactivate=lambda _who: spend(), is_active=lambda: False
+        )
+        monkeypatch.setattr(chat_handlers, "safety_override", lambda: override)
+        assert await approval_picker.handle_trust_call(chan.orch, _click(OWNER, ts))
+        return fut
+
+    fut = asyncio.run(click())
+    assert fut.result() == "rejected"
+    assert chan.slot._trust is False
+    assert chan.state.sessions.policies.get(f"dashboard:{SLOT}", "") == ""
+    assert chan.slack.ephemerals[-1][2] == approval_picker.NOT_LIVE_TEXT

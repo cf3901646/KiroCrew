@@ -387,3 +387,81 @@ def test_a_code_channel_card_footer_cannot_ping_the_channel() -> None:
     plain = _build_approval_blocks(event, is_dm=False)  # type: ignore[arg-type]
     assert "<!here>" not in code[-1]["elements"][0]["text"]
     assert "<!here>" in plain[-1]["elements"][0]["text"]  # every other card is unchanged
+
+
+class _DeclaredOverride:
+    """A declared YOLO grant: a slot-scoped Trust deactivates it first (an await)."""
+
+    is_declared = True
+
+    def __init__(self, on_deactivate: Any) -> None:
+        self._on_deactivate = on_deactivate
+
+    def deactivate(self, _who: str) -> None:
+        self._on_deactivate()
+
+    def is_active(self) -> bool:
+        return False
+
+
+def _spend_during_deactivate(monkeypatch: Any, fut: asyncio.Future) -> None:
+    import time
+
+    import kiro_crew.dashboard.chat_handlers as chat_handlers
+
+    def spend() -> None:
+        # The dashboard answers the prompt while apply_approval_mode awaits.
+        fut.get_loop().call_soon_threadsafe(fut.set_result, "rejected")
+        time.sleep(0.05)
+
+    override = _DeclaredOverride(spend)
+    monkeypatch.setattr(chat_handlers, "safety_override", lambda: override)
+
+
+def test_a_worker_card_spent_inside_the_mode_change_grants_nothing(
+    relay: Any, monkeypatch: Any
+) -> None:
+    async def go() -> asyncio.Future:
+        card, fut = await _run_relay(relay)
+        _spend_during_deactivate(monkeypatch, fut)
+        assert await wa.handle_click(relay.orch, _click(OWNER, card, wa.TRUST_ACTION_ID))
+        return fut
+
+    fut = asyncio.run(go())
+    assert fut.result() == "rejected"
+    assert relay.slot._trust is False
+    assert relay.state.sessions.policies.get(f"dashboard:{SLOT}", "") == ""
+    assert relay.slack.ephemerals[-1][2] == approval_picker.NOT_LIVE_TEXT
+    assert not [r for r in relay.mode_rows if r["operation"] == "mode_change:trust"]
+
+
+def test_cancelling_the_turn_during_finish_is_not_swallowed(relay: Any) -> None:
+    """A Stop / deadline while the relay is still posting must still cancel the turn."""
+    after: list[str] = []
+
+    async def turn(relay_task: asyncio.Task) -> None:
+        await wa.finish(relay_task, "approved", deny_cause="", host_ended=False)
+        after.append("ran the approved path")
+
+    async def go() -> tuple[asyncio.Task, asyncio.Task]:
+        started = asyncio.Event()
+
+        async def slow_relay() -> Any:
+            started.set()
+            await asyncio.sleep(10)
+
+        relay_task = asyncio.ensure_future(slow_relay())
+        owner = asyncio.ensure_future(turn(relay_task))
+        await started.wait()
+        await asyncio.sleep(0)
+        owner.cancel()
+        try:
+            await owner
+        except asyncio.CancelledError:
+            pass
+        await asyncio.sleep(0)
+        return owner, relay_task
+
+    owner, relay_task = asyncio.run(go())
+    assert owner.cancelled() and after == []
+    assert relay_task.cancelled()  # stopped, so no card can be posted late

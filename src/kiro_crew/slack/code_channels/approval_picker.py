@@ -59,6 +59,7 @@ NO_SESSION_TEXT = "This channel's session isn't open right now. Try again in a m
 NOT_ALLOWED_TEXT = "⛔ You can't change this channel's approval mode."
 NOT_THIS_CARD_TEXT = "⛔ That approval isn't this channel's to trust."
 NOT_LIVE_TEXT = "⛔ That approval isn't waiting any more, so nothing changed."
+#: The same words ``apply_approval_mode`` answers a spent prompt with (its 409).
 STALE_REASON = "the approval is no longer waiting"
 TRUSTED_CARD_TEXT = "🤝 Approved, and this channel is now on Trust (<@{user}>)."
 
@@ -140,6 +141,8 @@ async def _apply(
         request_app="",
         cron_creator="",
         audit_caller=lambda _label: f"{AUDIT_CALLER}:{user}",
+        # Asked again inside, after its own await and right before the grant.
+        still_live=still_live,
     )
     try:
         body = json.loads(getattr(resp, "text", "") or "{}")

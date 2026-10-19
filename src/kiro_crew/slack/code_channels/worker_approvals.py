@@ -282,11 +282,17 @@ async def finish(
     if relay_task is None:
         return
     try:
-        card = await relay_task
+        # Shielded: cancelling THIS turn must not read as the relay's own
+        # cancellation (an unshielded await cancels the awaited task with it).
+        card = await asyncio.shield(relay_task)
     except asyncio.CancelledError:
-        if relay_task.cancelled():
-            return  # the relay itself was cancelled: nothing posted to retire
-        raise  # this turn is being cancelled again: never swallow it
+        current = asyncio.current_task()
+        if relay_task.cancelled() and not (current is not None and current.cancelling()):
+            return  # the relay alone was cancelled: nothing posted to retire
+        # This turn is being cancelled: stop the relay so no card is posted
+        # late, and never swallow the turn's own cancellation.
+        relay_task.cancel()
+        raise
     except Exception:
         return
     if card is None:
