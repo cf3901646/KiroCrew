@@ -372,11 +372,18 @@ def _build_approval_blocks(
     tag = f"[{source}] " if source else ""
     title_safe, _ = redact_exfiltration_urls(event.title)
     title_safe, _ = redact_credentials(title_safe)
-    footer = f":lock: {tag}*{title_safe}*"
+    from kiro_crew.slack.format import escape_mrkdwn
+
+    def _esc(text: str) -> str:
+        # A code channel's card lands in a shared channel: agent-authored text
+        # must not carry <!channel>/<@U…> entities into it.
+        return escape_mrkdwn(text) if channel_trust else text
+
+    footer = f":lock: {tag}*{_esc(title_safe)}*"
     if event.tool_purpose:
         purpose, _ = redact_exfiltration_urls(event.tool_purpose)
         purpose, _ = redact_credentials(purpose)
-        footer += f" — {purpose}"
+        footer += f" — {_esc(purpose)}"
 
     # When full tool_input is available, show a simple header and the
     # complete command in a code block below.

@@ -452,6 +452,16 @@ button. The channel then gets a one-line warning that tools run without asking a
 workers the agent starts inherit it. Anyone else who clicks it is told they can't, and
 nothing changes.
 
+**Workers ask in the channel too.** When the channel's agent starts worker sessions, a
+worker's approval prompt is also posted in the channel, headed with the worker's title
+(for example **Worker: Fix #21964** wants to run:). The card shows the tool and its
+arguments, with secrets and suspicious links redacted, and nothing from the worker's
+conversation. Only you can answer it: **Approve** and **Reject** answer the worker's
+prompt exactly as the dashboard's buttons do, and **Trust this channel** approves it and
+puts the channel's own session on Trust. A worker that is already running keeps its own
+mode; workers started after that start with at most Trust. If the prompt is answered in
+the dashboard or nobody answers in time, the card changes to say so and its buttons go.
+
 ---
 
 ## Reusing the App in Another Workspace

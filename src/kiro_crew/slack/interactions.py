@@ -770,12 +770,10 @@ async def dispatch(payload: dict) -> None:
         if await handle_select(_orch, payload):
             return
 
-    # ── Slack Code: an approval card's "Trust this channel" (owner-only, audited there) ──
-    from kiro_crew.slack.code_channels import approval_picker
+    # ── Slack Code: approval-card controls (owner-only, audited there) ──
+    from kiro_crew.slack.code_channels.worker_approvals import dispatch_card_click
 
-    if action_id == approval_picker.TRUST_CALL_ACTION_ID:
-        if await channel_inbound_permitted("slack"):
-            await approval_picker.handle_trust_call(_orch, payload)
+    if await dispatch_card_click(_orch, payload, action_id):
         return
 
     # ── OPTIONS Send / legacy choice buttons ──

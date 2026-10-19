@@ -824,6 +824,8 @@ from kiro_crew.slack.code_channels.binding import notify_turn_end as notify_code
 from kiro_crew.slack.code_channels.binding import (
     notify_turn_start as notify_code_channel_turn_start,
 )
+from kiro_crew.slack.code_channels.worker_approvals import finish as finish_worker_approval
+from kiro_crew.slack.code_channels.worker_approvals import relay as relay_worker_approval
 from kiro_crew.slack.handler import post_linked_approval, resolve_linked_approval
 from kiro_crew.slack.outbound import PostedOptions
 from kiro_crew.start_priority import StartPriority, person_priority
@@ -7419,6 +7421,19 @@ async def _run_chat(
                             _host_deny_reason = (
                                 "the approval prompt could not be delivered to Slack"
                             )
+                # A worker that a Slack Code channel's session created asks in that
+                # channel too (top-level, owner-only); the dashboard prompt stays.
+                _worker_card = None
+                if _slack_approval_ts is None and "resolved" not in perm_meta:
+                    _worker_card = await relay_worker_approval(
+                        state,
+                        slot,
+                        session_key,
+                        event.request_id,
+                        event.title,
+                        event.tool_input or "",
+                        fut,
+                    )
                 # Pre-seeded so the `finally` backstop below is total over EVERY
                 # exit from the await — including CancelledError, which slot
                 # deletion / cleanup endpoints raise by cancelling slot.task.
@@ -7696,6 +7711,12 @@ async def _run_chat(
                                 "Failed to clean up linked Slack approval message",
                                 exc_info=True,
                             )
+                    # A relayed worker card says how it was answered (never raises).
+                    await finish_worker_approval(
+                        _worker_card,
+                        outcome,
+                        timed_out=_host_deny_cause == DENY_CAUSE_APPROVAL_TIMEOUT,
+                    )
                 if outcome == "approved_trust_reads":
                     slot._trust_reads = True
                     outcome = "approved"

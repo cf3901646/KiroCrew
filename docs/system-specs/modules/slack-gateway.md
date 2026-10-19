@@ -2011,6 +2011,20 @@ the hooks never fire, and `kirocrew-core` lists none of the tools.
   mutation, its sweep approving the waiting call and its `mode_change:trust` row
   naming `slack-code-channels:<user>` -- and posts one warning line in the
   channel. No approval store of its own. SEL: `slack.code_channel.approval_mode`.
+- **Worker approvals.** A prompt raised in a session the channel's CURRENT session
+  created (`_created_by`, resolved back through `surface.binding_for_slot`; not
+  Slack-linked itself; feature on; channel not archived) is relayed by
+  `worker_approvals.relay` from `_run_chat`, top-level in the channel, headed with
+  the worker's redacted, mrkdwn-escaped title; the tool and arguments take the same
+  outbound redaction as every card. Approve / Reject / Trust this channel are its own
+  action ids, routed by `interactions.dispatch` after its owner check and the
+  `channels` inbound ceiling to `worker_approvals.handle_click`, which re-checks the
+  lineage live, applies the code-channel gates and resolves the worker's own future
+  with `state.resolve_slot_approval` pinned to the future the card was posted for
+  (never a state-wide id lookup). Trust puts the channel's session on Trust; running
+  workers keep their mode. `_run_chat`'s `finally` calls `worker_approvals.finish`,
+  which updates the card in place (approved / declined in the dashboard, timed out)
+  unless a click already did. SEL: `slack.code_channel.worker_approval`.
 
 ## Dependencies
 
