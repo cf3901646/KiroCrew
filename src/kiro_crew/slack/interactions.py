@@ -770,6 +770,14 @@ async def dispatch(payload: dict) -> None:
         if await handle_select(_orch, payload):
             return
 
+    # ── Slack Code: an approval card's "Trust this channel" (owner-only, audited there) ──
+    from kiro_crew.slack.code_channels import approval_picker
+
+    if action_id == approval_picker.TRUST_CALL_ACTION_ID:
+        if await channel_inbound_permitted("slack"):
+            await approval_picker.handle_trust_call(_orch, payload)
+        return
+
     # ── OPTIONS Send / legacy choice buttons ──
     # Both RESOLVE an [OPTIONS:] choice: they edit/post the selection to the
     # channel AND re-dispatch it as a fresh turn. So a ``channels`` policy that

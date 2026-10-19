@@ -1794,8 +1794,8 @@ _SPLIT_HELPERS: dict[str, str] = {
 }
 
 #: SHA-256 of the sorted ``"<name> <kind> <signature>"`` lines of every moved name,
-#: captured from the one-module file before the split.
-_BASE_SHAPE_DIGEST = "6c782deaca93e4395ca8d4f47f8b25ce32071d2cd1a36e7828a746e227ab45f7"
+#: captured before the split; re-pinned when the approval card gained channel_trust.
+_BASE_SHAPE_DIGEST = "4d21e8103f24a29162d40b9ed17df3a8e192d0acf687a27e0283e71846637583"
 
 #: Definitions that stay in the facade file, each because a repository guard, a
 #: contract or the import-time body reads it there. The reason per entry is in

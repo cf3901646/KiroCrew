@@ -443,6 +443,15 @@ To keep one channel on Normal, change the mode on that channel's session. If tha
 is closed, the channel's next message opens a new session, which starts in the configured
 mode again.
 
+**Approval prompts in the channel.** When a code channel's session needs an approval, the
+**Tool approval requested** card is posted in the channel itself, where the agent's
+replies go, not in a thread. Besides **Approve** and **Reject** it has **Trust this
+channel**: only you (the bot's owner) can use it, and it approves that call and puts the
+channel's session on Trust, through the same audited change as the dashboard's Trust
+button. The channel then gets a one-line warning that tools run without asking and that
+workers the agent starts inherit it. Anyone else who clicks it is told they can't, and
+nothing changes.
+
 ---
 
 ## Reusing the App in Another Workspace

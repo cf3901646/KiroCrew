@@ -213,17 +213,26 @@ def _grant_linked_trust(linked_entry: _LinkedApproval, sessions: SessionManager 
 async def post_linked_approval(
     slack: SlackClientOps,
     channel: str,
-    thread_ts: str,
+    thread_ts: str | None,
     request_id: str | int,
     session_key: str,
     title: str,
     tool_input: str = "",
+    *,
+    channel_trust: bool = False,
 ) -> str | None:
     """Mirror a dashboard tool-approval prompt into a linked Slack thread.
 
     Posts Approve / Reject buttons threaded under ``thread_ts`` and registers a
     :class:`_LinkedApproval` keyed by ``channel:ts`` so a button click resolves
     the dashboard slot's approval future (see :func:`handle_interaction`).
+    ``thread_ts=None`` posts top-level: a Slack Code channel's own session
+    replies in the channel itself, so its prompts go there too.
+
+    ``channel_trust`` (a Slack Code channel's own session) adds a secondary
+    "Trust this channel" button, answered by
+    :mod:`kiro_crew.slack.code_channels.approval_picker` with that module's
+    owner gates; this function grants nothing for it.
 
     Returns the Slack message ts on success, or ``None`` if the post failed.
     The caller (dashboard ``_run_chat``) treats ``None`` as "delivery failed"
@@ -256,7 +265,11 @@ async def post_linked_approval(
     trust_grantable = channel.startswith("D") and _linked_trust_grantable(session_key, request_id)
     # _build_approval_blocks is typed for AcpEvent but only reads the four
     # attributes the shim provides (request_id/title/tool_input/tool_purpose).
-    blocks = _build_approval_blocks(event, is_dm=trust_grantable)  # type: ignore[arg-type]
+    blocks = _build_approval_blocks(
+        event,  # type: ignore[arg-type]
+        is_dm=trust_grantable,
+        channel_trust=channel_trust and not trust_grantable,
+    )
     try:
         approval_ts = await slack.post_blocks(
             channel, blocks, "Manual approval required", thread_ts
@@ -280,7 +293,9 @@ def resolve_linked_approval(channel: str, approval_ts: str) -> None:
     _linked_approvals.pop(f"{channel}:{approval_ts}", None)
 
 
-def _build_approval_blocks(event: LLMEvent, is_dm: bool = True, source: str = "") -> list[dict]:
+def _build_approval_blocks(
+    event: LLMEvent, is_dm: bool = True, source: str = "", *, channel_trust: bool = False
+) -> list[dict]:
     """Build Block Kit blocks for tool approval prompt.
 
     Args:
@@ -289,6 +304,9 @@ def _build_approval_blocks(event: LLMEvent, is_dm: bool = True, source: str = ""
         source: Optional label for background agents (e.g. "subagent",
             "cron").  Prefixed to the header so users can tell main-agent
             approvals apart from background ones.
+        channel_trust: A Slack Code channel's own session: adds a secondary
+            "Trust this channel" button between Approve and Reject (Approve
+            stays the one primary button).
 
     Shows the full command text (from tool_input) in a code block so users
     can see exactly what will run before approving.  Falls back to the
@@ -320,6 +338,20 @@ def _build_approval_blocks(event: LLMEvent, is_dm: bool = True, source: str = ""
                 "type": "button",
                 "text": {"type": "plain_text", "text": "Trust session"},
                 "action_id": _ACTION_TRUST,
+                "value": req_value,
+            },
+        )
+    elif channel_trust:
+        from kiro_crew.slack.code_channels.approval_picker import (
+            TRUST_CALL_ACTION_ID,
+            TRUST_CALL_LABEL,
+        )
+
+        buttons.append(
+            {
+                "type": "button",
+                "text": {"type": "plain_text", "text": TRUST_CALL_LABEL},
+                "action_id": TRUST_CALL_ACTION_ID,
                 "value": req_value,
             },
         )
