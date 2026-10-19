@@ -65,19 +65,11 @@ def _enabled(_floor_monkeypatch, tmp_path):
     create_rate_limit.reset_for_tests()
     audience.clear()
     cce.forget_senders()
-    # The dispatch switch's config-path reading is taken off the loop by every verb
-    # before it judges; tests that call the judgement directly take it here. Its
-    # freshness window is widened so a slow host never reads it as stale (the
-    # staleness test sets the stamp itself).
-    _floor_monkeypatch.setattr(cce, "_PATH_CHECK_TTL_S", 1e9)
-    cce._forget_config_path_check()
     live_config_mod._clear_torn_files()
-    asyncio.run(cce.refresh_config_path_check())
     yield
     set_store(None)
     audience.clear()
     cce.forget_senders()
-    cce._forget_config_path_check()
     live_config_mod._clear_torn_files()
     create_rate_limit.reset_for_tests()
 
@@ -1113,12 +1105,7 @@ def config_files(tmp_path):
 _OPTED_IN = {"slack": {"code_channels": True, "code_channel_dispatch": True}}
 
 
-_NOT_A_FILE = "could not be read as a whole file"
-
-
-def _read_paths() -> None:
-    """Take the switch's off-loop config-path reading, as every verb does first."""
-    asyncio.run(cce.refresh_config_path_check())
+_NOT_A_FILE = "could not be read whole"
 
 
 def test_a_torn_read_under_the_live_watcher_refuses(config_files, monkeypatch):
@@ -1157,33 +1144,70 @@ def test_a_torn_read_under_the_live_watcher_refuses(config_files, monkeypatch):
     assert str(local) in torn_config_files()
     assert observed_degraded_sections() == before, "no process-wide mark"
     monkeypatch.setattr(cce, "_live_config", lambda: snap)
-    _read_paths()
     assert _NOT_A_FILE in cce._switch_refusal()
     # The recovery probe reads the files whole; the kept snapshot is still the
     # opted-in one, and the switch must stay off.
     assert ConfigWatch._document_is_torn() is False
     assert str(local) in torn_config_files()
-    _read_paths()
     assert _NOT_A_FILE in cce._switch_refusal()
     assert observed_degraded_sections() == before
 
 
-def test_an_overlay_path_that_is_a_directory_refuses(config_files, monkeypatch):
-    """A ``config.local.json`` that exists but is not a file may stand where the
-    opt-out was; the switch reads it as unknown. The loader keeps reading it as
-    absent, so no other gate moves (round-8; CI round-3 First Principles)."""
+def test_an_overlay_path_that_is_not_a_file_refuses(config_files, monkeypatch):
+    """First Principles' own test, round on ab90c3719f: an opt-out lost while the
+    loader reports no degradation and dispatch reads on. ``config.local.json`` is a
+    link to a share that is not mounted right now (the file holding the opt-out is
+    there, just unreachable), or a directory: the loader reads it as absent and
+    records nothing, so the merged config opts in. The watcher's probe lists it and
+    the switch refuses. Fails without the probe (fresh-context review)."""
+    from kiro_crew.config.live import ConfigWatch, torn_config_files
     from kiro_crew.config.loader import KiroCrewConfig
     from kiro_crew.config.resolution import observed_degraded_sections
 
     base, local = config_files
     base.write_text(json.dumps(_OPTED_IN), encoding="utf-8")
-    local.mkdir()
+    _symlink_or_skip(local, local.parent / "unmounted-share" / "kc.json")
     before = observed_degraded_sections()
     cfg = KiroCrewConfig.load()
-    assert observed_degraded_sections() == before
+    assert observed_degraded_sections() == before, "the loader records nothing"
+    assert cfg.slack.code_channel_dispatch is True, "dispatch reads on"
     monkeypatch.setattr(cce, "_live_config", lambda: cfg)
-    _read_paths()
+    # Not a tear: the watcher still adopts the load, so other settings reload.
+    assert ConfigWatch._document_is_torn() is False
+    assert str(local) in torn_config_files()
     assert _NOT_A_FILE in cce._switch_refusal()
+    assert observed_degraded_sections() == before, "no other gate moves"
+
+
+def test_an_overlay_directory_refuses_too(config_files, monkeypatch):
+    from kiro_crew.config.live import ConfigWatch
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    base, local = config_files
+    base.write_text(json.dumps(_OPTED_IN), encoding="utf-8")
+    local.mkdir()
+    cfg = KiroCrewConfig.load()
+    monkeypatch.setattr(cce, "_live_config", lambda: cfg)
+    ConfigWatch._document_is_torn()
+    assert _NOT_A_FILE in cce._switch_refusal()
+
+
+def test_the_watcher_takes_the_probe_when_it_starts(config_files):
+    """The first cycle is one poll interval away; the record must not wait for it."""
+    from kiro_crew.config.live import ConfigWatch, torn_config_files
+    from kiro_crew.config.loader import KiroCrewConfig
+
+    base, local = config_files
+    base.write_text(json.dumps(_OPTED_IN), encoding="utf-8")
+    _symlink_or_skip(local, local.parent / "unmounted-share" / "kc.json")
+
+    async def boot() -> None:
+        w = ConfigWatch()
+        await w.start(KiroCrewConfig.load())
+        await w.stop()
+
+    asyncio.run(boot())
+    assert str(local) in torn_config_files()
 
 
 def _symlink_or_skip(link, target) -> None:
@@ -1191,36 +1215,6 @@ def _symlink_or_skip(link, target) -> None:
         link.symlink_to(target)
     except (OSError, NotImplementedError):  # pragma: no cover - Windows without privilege
         pytest.skip("this host cannot create symlinks")
-
-
-def test_a_dangling_overlay_symlink_refuses(config_files, monkeypatch):
-    """An overlay symlink whose target is gone may stand where the opt-out was
-    (round-9 security review)."""
-    from kiro_crew.config.loader import KiroCrewConfig
-
-    base, local = config_files
-    base.write_text(json.dumps(_OPTED_IN), encoding="utf-8")
-    _symlink_or_skip(local, local.parent / "gone.json")
-    cfg = KiroCrewConfig.load()
-    monkeypatch.setattr(cce, "_live_config", lambda: cfg)
-    _read_paths()
-    assert _NOT_A_FILE in cce._switch_refusal()
-
-
-def test_a_dangling_overlay_after_a_cached_load_still_refuses(config_files, monkeypatch):
-    """A healthy load with no overlay is cached; a dangling overlay appearing next
-    reuses that cache, and the switch's own path check still refuses."""
-    from kiro_crew.config.loader import KiroCrewConfig
-
-    base, local = config_files
-    base.write_text(json.dumps(_OPTED_IN), encoding="utf-8")
-    assert KiroCrewConfig.load().slack.code_channel_dispatch is True
-    assert KiroCrewConfig.load().slack.code_channel_dispatch is True  # a cache hit
-    _symlink_or_skip(local, local.parent / "gone.json")
-    cfg = KiroCrewConfig.load()
-    monkeypatch.setattr(cce, "_live_config", lambda: cfg)
-    _read_paths()
-    assert _NOT_A_FILE in cce._switch_refusal()
 
 
 def test_a_lost_base_config_can_never_widen_dispatch(config_files, monkeypatch):
@@ -1244,51 +1238,6 @@ def test_a_lost_base_config_can_never_widen_dispatch(config_files, monkeypatch):
 
 
 # ── round-10 security review ──────────────────────────────────────────────
-
-
-def test_the_config_path_reading_runs_off_the_loop_and_errs_off_until_taken(monkeypatch):
-    """The switch's synchronous gate never stats a file: with no fresh reading it
-    refuses and starts one in a thread, which the next judgement reads."""
-    import threading
-
-    threads: list[str] = []
-    real = cce._check_config_paths_blocking
-
-    def recorded() -> str:
-        threads.append(threading.current_thread().name)
-        return real()
-
-    monkeypatch.setattr(cce, "_check_config_paths_blocking", recorded)
-
-    async def body() -> None:
-        cce._forget_config_path_check()
-        assert "not been checked yet" in cce._switch_refusal()
-        assert threads == [], "the gate itself read nothing"
-        for _ in range(50):
-            await asyncio.sleep(0.01)
-            if cce._path_check is not None:
-                break
-        assert cce._switch_refusal() == ""
-
-    asyncio.run(body())
-    assert threads and all(name != threading.main_thread().name for name in threads)
-
-
-def test_a_stale_config_path_reading_errs_off(monkeypatch):
-    import time
-
-    monkeypatch.setattr(cce, "_PATH_CHECK_TTL_S", 10.0)
-    with cce._path_check_lock:
-        cce._path_check = (time.monotonic() - 11.0, "")
-    assert "not been checked yet" in cce._switch_refusal()
-
-
-def test_verbs_take_the_config_path_reading_before_judging(monkeypatch):
-    """``load_code_channel_lineage`` -- awaited by every session-control verb's
-    prewarm and by every work-ledger route -- refreshes the reading."""
-    cce._forget_config_path_check()
-    asyncio.run(sc.load_code_channel_lineage())
-    assert cce._path_check is not None and cce._switch_refusal() == ""
 
 
 def test_a_store_whose_routes_are_not_an_object_reads_as_unavailable(tmp_path, monkeypatch):
