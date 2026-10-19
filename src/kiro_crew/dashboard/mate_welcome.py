@@ -293,7 +293,21 @@ def _dispatch_greeting(state: Any, slot: Any, kickoff: str) -> None:
     dispatch_hidden_turn(state, slot, kickoff, human_seen=True)
 
 
-def dispatch_hidden_turn(state: Any, slot: Any, prompt: str, *, human_seen: bool) -> None:
+def app_is_stopping(state: Any) -> bool:
+    """Whether the gateway is shutting down or restarting, so no new turn should start.
+
+    The same answer the turn runner's own shutdown check gives
+    (``session.process_shutdown_requested``): a signal shutdown, or the final
+    drain an in-app restart starts before it re-execs.
+    """
+    from kiro_crew.session import process_shutdown_requested
+
+    return process_shutdown_requested(getattr(state, "sessions", None))
+
+
+def dispatch_hidden_turn(
+    state: Any, slot: Any, prompt: str, *, human_seen: bool, heartbeat: bool = False
+) -> bool:
     """Run *prompt* as one gateway-authored turn in *slot*, with no user row for it.
 
     Shared by the first welcome and the goal check-ins
@@ -301,32 +315,55 @@ def dispatch_hidden_turn(state: Any, slot: Any, prompt: str, *, human_seen: bool
     sent (``_turn_user_sent`` stays false), so the operations only a user's turn
     may run (a guide, ``update_self``, most cards) refuse inside it; in a
     crewmate's own thread its goal, milestones and check-ins cards are still
-    admitted (``handlers.guide.REQ_OWN_GOAL_TURN``).
+    admitted (``handlers.guide.REQ_OWN_GOAL_TURN``). Its pre-tool text is held
+    until the turn ends (:mod:`kiro_crew.dashboard.heartbeat_quiet_end`): a
+    quiet end or a final reply folds that narration into the steps. *heartbeat*
+    marks the heartbeat wake.
+
+    Returns False, starting nothing, while the app is stopping
+    (:func:`app_is_stopping`). A restart cancels every running turn, and a
+    worker cut by it ends a turn that would wake its crewmate here; a turn
+    started then writes its in-flight marker and is gone a moment later, so
+    the restored thread showed "interrupted when the app restarted" on a
+    thread whose own work had finished before the restart.
     """
     # Deferred: chat_handlers / chat import this package's handlers at load.
     from kiro_crew.dashboard.chat import _run_chat
     from kiro_crew.dashboard.chat_handlers import _sweep_stale_permissions
     from kiro_crew.dashboard.turn_dispatch import spawn_guarded_turn
 
+    if app_is_stopping(state):
+        logger.info("hidden gateway turn on %s not started: the app is stopping", slot.key)
+        return False
     if human_seen:
         slot._human_seen = True
     slot._has_reader = False  # delivered over the WebSocket, like a ws send
     slot._file_changes = []
     _sweep_stale_permissions(slot)
-    task = spawn_guarded_turn(
-        state,
-        slot,
-        state.run_background_turn(
+    # Every hidden turn holds its pre-tool text (``_hidden_turn``); the heartbeat
+    # flag is passed only when set.
+    turn = (
+        _run_chat(
+            state,
             slot,
-            _run_chat(
-                state,
-                slot,
-                prompt,
-                _synthetic_payload=True,
-                _turn_actor="gateway",
-            ),
-        ),
+            prompt,
+            _synthetic_payload=True,
+            _turn_actor="gateway",
+            _heartbeat_turn=True,
+            _hidden_turn=True,
+        )
+        if heartbeat
+        else _run_chat(
+            state,
+            slot,
+            prompt,
+            _synthetic_payload=True,
+            _turn_actor="gateway",
+            _hidden_turn=True,
+        )
     )
+    task = spawn_guarded_turn(state, slot, state.run_background_turn(slot, turn))
     slot.task = task
     state.push_slots_update()
     logger.info("hidden gateway turn started on %s", slot.key)
+    return True

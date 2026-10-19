@@ -268,6 +268,34 @@ def capabilities_prompt(added: str) -> str:
     )
 
 
+def schedule_capabilities_nudge(state: Any, slot_key: str, added: str) -> None:
+    """Tell the crewmate of thread *slot_key* that its capabilities card was applied.
+
+    Once its thread is idle, through the same wait as the other goal nudges.
+    Only a crewmate's own pinned thread is told; any other slot is left alone.
+    """
+    from kiro_crew.dashboard.mate_thread_wakes import is_crewmate_thread
+
+    slot = state.get_slot(slot_key) if state is not None else None
+    if slot is None or not is_crewmate_thread(slot):
+        return
+    member = slot.agent
+
+    async def start() -> None:
+        # The slug read loads the config, so it runs off the loop.
+        slug = await asyncio.to_thread(members_mod.member_slug, member)
+        _schedule(
+            state,
+            f"{slug}:capabilities",
+            slug,
+            member,
+            lambda _rec, _tools: capabilities_prompt(added),
+            "capabilities added",
+        )
+
+    task = asyncio.get_running_loop().create_task(start())
+    _tasks(state)[f"{slot_key}:capabilities-start"] = task
+    task.add_done_callback(lambda _t: _tasks(state).pop(f"{slot_key}:capabilities-start", None))
 
 
 def removed_prompt(rec: dict[str, Any], goal_id: str, *, has_mate_tools: bool = True) -> str | None:

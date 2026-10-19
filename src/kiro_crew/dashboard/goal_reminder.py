@@ -317,6 +317,46 @@ _HEARTBEAT_SMALL_STEPS = crewmate_prompts.text("heartbeat.handoff_small_steps")
 _HEARTBEAT_PATROL = crewmate_prompts.text("heartbeat.patrol")
 
 
+#: The gateway's own line on a wake after every milestone is met. Principles,
+#: so the crewmate words what it does itself.
+MILESTONES_MET_LINE = crewmate_prompts.text("milestones.all_met")
+
+#: The gateway's line when every milestone is met and the next set already
+#: waits on the user's button: the card is the user's step, the work is this
+#: wake's.
+MILESTONES_PENDING_LINE = crewmate_prompts.text("milestones.card_waiting")
+
+
+async def milestones_line(state: Any, slot_key: str, rec: dict[str, Any]) -> str:
+    """The gateway line this wake carries about the goal's milestones, or ``""``.
+
+    Empty while the goal record has an open milestone
+    (:func:`member_goals.milestones_all_met`). Once none is open, the line asks
+    for the next milestones on a card first (:data:`MILESTONES_MET_LINE`); when
+    the thread already holds a milestones card waiting on the user's button,
+    doing work toward the goal is the fallback (:data:`MILESTONES_PENDING_LINE`).
+    A set the user applies has open milestones again, so both stay off until
+    they are met. A card store that cannot be read counts as no card.
+    """
+    if not member_goals.milestones_all_met(rec):
+        return ""
+    from kiro_crew.change_card_catalog import KIND_CREWMATE_KEY_RESULTS
+    from kiro_crew.dashboard import change_cards
+
+    try:
+        store = change_cards.card_store_for(state)
+        await store.warm()
+        cards = store.pending(slot_key)
+    except Exception:
+        logger.debug("milestones line: card store unreadable for %s", slot_key, exc_info=True)
+        cards = []
+    open_status = (change_cards.STATUS_PENDING, change_cards.STATUS_APPLYING)
+    waiting = any(
+        c.get("kind") == KIND_CREWMATE_KEY_RESULTS and c.get("status") in open_status for c in cards
+    )
+    return MILESTONES_PENDING_LINE if waiting else MILESTONES_MET_LINE
+
+
 def member_has_session_tools(member: str) -> bool:
     """Whether *member*'s thread is expected to hold the ``session_*`` tools.
 
