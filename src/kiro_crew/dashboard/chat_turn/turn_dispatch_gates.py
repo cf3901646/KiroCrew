@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from kiro_crew.dashboard.chat_runner import (
+        _MIRROR_THINKING,
         _SYNTHETIC_RECOVERY_MSGS,
         HOOK_EVENT_AGENT_SPAWN,
         HOOK_EVENT_USER_PROMPT_SUBMIT,
@@ -225,7 +226,6 @@ async def _turn_dispatch_prep(turn: _ChatTurn) -> None:
 
 async def _turn_dispatch_gates(turn: _ChatTurn) -> _Flow | None:
     """Pass the dispatch gates from the session's first turn up to the stream's start."""
-    _mirror_stream_ts: str
     injected: list[str]
     _attachments = turn._attachments
     _context_is_new = turn._context_is_new
@@ -483,24 +483,32 @@ async def _turn_dispatch_gates(turn: _ChatTurn) -> _Flow | None:
             try:
                 if not _is_synthetic:
                     from kiro_crew.slack.format import (  # circular: slack.format -> dashboard.state -> chat
-                        escape_mrkdwn,
+                        mirror_prompt_echo,
                     )
 
                     # The prompt is not only the operator's keystrokes (a
                     # session_send peer lands here too), and Slack parses
-                    # <!channel> / <@U…> in `text`, so escape at this sink.
-                    _mirror_msg = escape_mrkdwn(_prepare_mirror_msg(_user_msg_for_mirror))
+                    # <!channel> / <@U…> in `text`, so escape at this sink:
+                    # links and channel refs stay live, a user mention is
+                    # flattened so the echo never re-pings, and a broadcast
+                    # or stray bracket is escaped. Redaction runs first.
                     await state.slack_client.post_message(
-                        _mirror_chan, f"💬 _{_mirror_msg}_", _mirror_thread
+                        _mirror_chan,
+                        mirror_prompt_echo(_prepare_mirror_msg(_user_msg_for_mirror)),
+                        _mirror_thread,
                     )
-                # Start a stream for real-time tool animations
-                _mirror_stream_ts = (
-                    await state.slack_client.start_stream(
-                        _mirror_chan, _mirror_thread, initial_text="Thinking…"
+                # A separate placeholder, not the task stream's opening text:
+                # a stream only appends, so a "Thinking…" written into it stays
+                # above Slack's own "Thinking completed" plan header for good.
+                # The stream opens on the first tool call instead, and the
+                # placeholder is deleted then, before the answer is posted, or
+                # at turn end, whichever comes first.
+                turn._mirror_thinking_ts = (
+                    await state.slack_client.post_message(
+                        _mirror_chan, _MIRROR_THINKING, _mirror_thread
                     )
                     or ""
                 )
-                turn._mirror_stream_ts = _mirror_stream_ts
             except Exception:
                 logger.debug("Failed to mirror user message to Slack", exc_info=True)
 
