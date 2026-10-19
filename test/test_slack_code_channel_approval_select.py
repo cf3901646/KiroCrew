@@ -270,3 +270,45 @@ def test_trust_with_the_feature_off_is_not_ours(chan: Any) -> None:
     assert asyncio.run(commands.handle_slash(chan.orch, _slash("trust all"), respond)) is False
     assert asyncio.run(approval_picker.handle_select(chan.orch, _pick("trust"))) is False
     assert _mode_of(chan.slot) == "normal"
+
+
+class _Override:
+    """A live YOLO grant (declared or ad hoc) the slot's own flags do not show."""
+
+    def __init__(self, declared: bool) -> None:
+        self.is_declared = declared
+        self.active = True
+        self.ended: list[str] = []
+
+    def is_active(self) -> bool:
+        return self.active
+
+    def deactivate(self, who: str) -> None:
+        self.ended.append(who)
+        self.active = False
+
+
+@pytest.mark.parametrize("declared", [True, False])
+def test_ask_ends_a_live_yolo_grant_even_when_the_slot_reads_ask(
+    chan: Any, monkeypatch: Any, declared: bool
+) -> None:
+    override = _Override(declared)
+    monkeypatch.setattr(chat_handlers, "safety_override", lambda: override)
+    assert _mode_of(chan.slot) == "normal"  # the slot's own flags already say Ask
+    replies = _run_slash(chan, "trust ask")
+    assert override.ended and not override.active
+    assert _changes(chan, "normal")
+    assert "already" not in replies[-1]
+
+
+def test_the_select_ends_a_live_yolo_grant_too(chan: Any, monkeypatch: Any) -> None:
+    override = _Override(True)
+    monkeypatch.setattr(chat_handlers, "safety_override", lambda: override)
+    assert asyncio.run(approval_picker.handle_select(chan.orch, _pick("normal")))
+    assert override.ended and _changes(chan, "normal")
+
+
+def test_an_unreadable_override_never_reads_as_unchanged(chan: Any, monkeypatch: Any) -> None:
+    monkeypatch.setattr(approval_picker, "_yolo_active", lambda: True)
+    _run_slash(chan, "trust ask")
+    assert _changes(chan, "normal")  # went through apply_approval_mode

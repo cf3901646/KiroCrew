@@ -108,6 +108,22 @@ def label(mode: str) -> str:
     return _LABELS.get(mode, _LABELS["normal"])
 
 
+def _yolo_active() -> bool:
+    """Whether the process-wide override (YOLO) is on; True when it cannot be read.
+
+    While it is on, a pick that matches the slot's own flags is still not
+    "unchanged": ``apply_approval_mode`` is what ends the override (Ask always
+    does; Reads or Trust do for a declared grant), so the change must reach it.
+    """
+    try:
+        from kiro_crew.dashboard.chat_handlers import safety_override
+
+        return bool(safety_override().is_active())
+    except Exception:
+        logger.debug("safety override state unreadable", exc_info=True)
+        return True
+
+
 def _command() -> str:
     """The app's slash command (``slack.command``), as the person types it."""
     try:
@@ -243,7 +259,7 @@ async def set_channel_mode(
         if still_live is not None and not still_live():
             _audit("denied", resources, STALE_REASON)
             return ModeResult("refused", NOT_LIVE_TEXT)
-        if current_mode(slot) == mode:
+        if current_mode(slot) == mode and not _yolo_active():
             _audit("allowed", f"{resources} result=unchanged")
             return ModeResult("unchanged", f"ℹ️ This channel is already on *{label(mode)}*.")
         try:
