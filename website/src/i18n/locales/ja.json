@@ -181,9 +181,11 @@
     "source_unknown": "不明な参照元",
     "scope_global": "グローバル範囲",
     "scope_project": "プロジェクト範囲",
+    "scope_mate": "このクルーメイトが所有",
     "mode_shared": "親テンプレートをそのまま使用（オーバーライドなし）",
     "mode_legacy_snapshot": "親に従っていません（独自のコピー）",
     "mode_inherited": "親に従っています",
+    "mode_mate": "専用の設定（その場で編集）",
     "version": "確認バージョン: {{revision}}",
     "savedVersion": "保存済みバージョン: {{revision}}",
     "unsavedDraft": "未保存のドラフト",
@@ -191,6 +193,7 @@
     "runtime_applied": "サーバーはこのバージョンの読み込みを報告しています。",
     "runtime_failed": "実行環境への読み込みに失敗しました。保存済みバージョンは保持されています。",
     "runtime_unverified": "実行環境での使用はまだ検証されていません。",
+    "runtime_owned": "このクルーメイトがこの設定を所有しています。",
     "newRuntime": "保存しても実行中のセッションは変わりません。新しい実行環境で保存済みバージョンを読み込みます。",
     "backendUnsupported": "保存はできますが、{{name}} との新しいチャットは開始できません。チャットが使うバックエンド（{{backend}}）は保存された機能を無視します。修正するには、ターミナルで下のコマンドを実行してから新しいチャットを開始してください。",
     "backendToolLimits": "保存はできますが、{{name}} との新しいチャットは開始できません。そのバックエンド（{{backend}}）は {{servers}} 接続内の個別のツールをオフにできません。修正するには、{{tab}} で接続全体をオフにするか、それらのツールをオンに戻してください。",
@@ -273,7 +276,8 @@
     "withheldUnexplained": "{{productName}} はこの承認を保存しません。理由を説明する既知の設定はありません。不具合として報告してください。",
     "withheldOpenTab": "MCP サーバータブを開く（下書きは保持されます）",
     "permissionsReview": "このページでは {{member}} の承認を変更できません。~/.kiro/agents にあるエージェントファイルに手書きの権限設定があります。それを削除してから「サーバーから再読み込み」を押してください。下書きは保持されています。対象は、手で編集された permissions ブロック、autoAllowReadonly、または toolsSettings 内の allowed / trusted リストです。",
-    "unreviewableDrift": "{{member}} のエージェントファイル {{file}} が、このページに表示できない設定でページの外から編集されたため、このページでは修正を書き込めず、「変更を確認」は無効のままです。~/.kiro/agents/{{file}} でその外部での編集を元に戻してから、「サーバーから再読み込み」を押してください。"
+    "unreviewableDrift": "{{member}} のエージェントファイル {{file}} が、このページに表示できない設定でページの外から編集されたため、このページでは修正を書き込めず、「変更を確認」は無効のままです。~/.kiro/agents/{{file}} でその外部での編集を元に戻してから、「サーバーから再読み込み」を押してください。",
+    "mateOwned": "{{name}} がこの設定を所有しています。編集内容は専用のファイルに保存されます。"
   },
   "api": {
     "client": {
@@ -9890,6 +9894,13 @@
       "scope_count_other": "{{count}} 人のメンバーに影響します",
       "scope_label": "影響範囲",
       "scope_only_this": "変更されるのはこのクルーメイトだけです。",
+      "addition_server": "{{name}} のワーカーに {{server}} を追加します。",
+      "addition_from_gateway": "このゲートウェイですでに動いているため、新しいコードは入りません。",
+      "addition_from_registry": "MCP レジストリ（{{id}}）から {{name}} 専用にインストールされます。",
+      "addition_from_card": "このカードで {{name}} 専用に設定されます。",
+      "addition_runs_unasked": "確認なしで実行: {{tools}}。",
+      "addition_asks_every_time": "呼び出しのたびに先に確認します。",
+      "addition_skill": "{{name}} のワーカーにスキル {{skill}} を追加します。",
       "secret_hint": "シークレットに直接保存されます。{{name}}には見えません。",
       "secret_label": "値",
       "status_applying": "適用中…",

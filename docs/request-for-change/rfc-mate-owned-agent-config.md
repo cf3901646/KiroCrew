@@ -679,11 +679,20 @@ for each crewmate:
   after = project(worker source base ∪ file additions)
   assert after grants exactly: source base + the carried-over additions
   (only then) repoint kiro_agent
+  then, for each of its DM threads whose record is a member selection carrying
+  its member_id and running the agent it was moved from:
+    template_id := kirocrew-mate-conductor   (member, store, mode, app unchanged)
+  record the agent moved from and the thread keys moved, for a rollback
 ```
 
 Exit criteria:
 - Every existing crewmate has a file and its binding points at it; identity,
-  memory, workspace and open chats are untouched.
+  memory and workspace are untouched. Its open chats keep their memory and
+  move onto the conductor on their next turn (2026-10-19 owner decision: a
+  thread's execution record names its agent, so a chat opened before the move
+  would otherwise keep the old agent while the upgrade notice says the work now
+  goes to a worker). Only `template_id` changes, and the keys moved are recorded
+  beside the moved crewmate so a rollback can put them back.
 - Each migrated worker grants its source base plus exactly the additions carried
   over — no capability silently gained or lost.
 

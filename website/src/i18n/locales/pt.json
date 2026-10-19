@@ -199,9 +199,11 @@
     "source_unknown": "Origem desconhecida",
     "scope_global": "Escopo global",
     "scope_project": "Escopo do projeto",
+    "scope_mate": "Pertence a este colega",
     "mode_shared": "Modelo pai como está (sem substituições)",
     "mode_legacy_snapshot": "Não segue o pai (cópia própria)",
     "mode_inherited": "Segue o pai",
+    "mode_mate": "Configuração própria (editada no lugar)",
     "version": "Versão de revisão: {{revision}}",
     "savedVersion": "Versão salva: {{revision}}",
     "unsavedDraft": "Rascunho não salvo",
@@ -209,6 +211,7 @@
     "runtime_applied": "O servidor informa que esta versão foi carregada.",
     "runtime_failed": "O carregamento em execução falhou. A versão salva foi mantida.",
     "runtime_unverified": "O uso em execução não foi verificado.",
+    "runtime_owned": "Este colega é dono desta configuração.",
     "newRuntime": "Salvar não altera as sessões ativas. Um novo ambiente de execução carrega a versão salva.",
     "backendUnsupported": "Salvar funciona, mas os novos chats com {{name}} não vão iniciar. Eles usam um backend ({{backend}}) que ignora as capacidades salvas. Para corrigir, execute o comando abaixo em um terminal e depois inicie um novo chat.",
     "backendToolLimits": "Salvar funciona, mas os novos chats com {{name}} não vão iniciar. O backend deles ({{backend}}) não consegue desativar ferramentas avulsas dentro da conexão {{servers}}. Para corrigir, vá até {{tab}} e desative a conexão inteira ou reative essas ferramentas.",
@@ -293,7 +296,8 @@
     "withheldUnexplained": "O {{productName}} não vai salvar esta aprovação, e nenhuma configuração conhecida explica o motivo. Relate isso como um bug.",
     "withheldOpenTab": "Abrir a aba Servidores MCP (mantém seu rascunho)",
     "permissionsReview": "Esta página não consegue alterar as aprovações de {{member}}: o arquivo de agente dele em ~/.kiro/agents tem configurações de permissão escritas à mão. Remova-as e depois pressione Recarregar do servidor. Seu rascunho foi mantido. As configurações são um bloco permissions editado à mão, autoAllowReadonly ou uma lista allowed ou trusted em toolsSettings.",
-    "unreviewableDrift": "O arquivo de agente {{file}} de {{member}} foi editado fora desta página em uma configuração que esta página não consegue mostrar, então esta página não consegue gravar a correção e Revisar alterações fica desativado. Desfaça essa edição externa em ~/.kiro/agents/{{file}} e depois pressione Recarregar do servidor."
+    "unreviewableDrift": "O arquivo de agente {{file}} de {{member}} foi editado fora desta página em uma configuração que esta página não consegue mostrar, então esta página não consegue gravar a correção e Revisar alterações fica desativado. Desfaça essa edição externa em ~/.kiro/agents/{{file}} e depois pressione Recarregar do servidor.",
+    "mateOwned": "{{name}} é dono desta configuração — as edições são salvas no próprio arquivo dele."
   },
   "api": {
     "client": {
@@ -10176,6 +10180,13 @@
       "scope_count_other": "Afeta {{count}} membros",
       "scope_label": "Afeta",
       "scope_only_this": "Só este colega muda.",
+      "addition_server": "Dê {{server}} ao trabalhador de {{name}}.",
+      "addition_from_gateway": "Este gateway já o executa, então nenhum código novo entra.",
+      "addition_from_registry": "Ele é instalado do registro MCP ({{id}}) só para {{name}}.",
+      "addition_from_card": "Ele é configurado neste cartão só para {{name}}.",
+      "addition_runs_unasked": "Roda sem perguntar a você: {{tools}}.",
+      "addition_asks_every_time": "Cada chamada pergunta a você antes.",
+      "addition_skill": "Dê a habilidade {{skill}} ao trabalhador de {{name}}.",
       "secret_hint": "Vai direto para os seus segredos. {{name}} nunca vê.",
       "secret_label": "Valor",
       "status_applying": "Aplicando…",

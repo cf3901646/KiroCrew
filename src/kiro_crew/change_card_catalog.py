@@ -45,6 +45,7 @@ from datetime import datetime
 from typing import Any
 
 from kiro_crew import guide_catalog
+from kiro_crew import mate_capability_catalog as _mate_catalog
 from kiro_crew import member_goals as _goals
 from kiro_crew.config.sections import (
     DEFAULT_MODEL,
@@ -929,7 +930,7 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
             )
         return {"name": name, "fields": f}
     if kind == KIND_CREWMATE_CAPABILITIES:
-        _only(p, {"member", "draft"})
+        _only(p, {"member", "draft", "origins"})
         member = _member_name(p, "member")
         draft = p.get("draft")
         if not isinstance(draft, dict):
@@ -953,7 +954,13 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
         clean_draft: dict[str, Any] = {"operations": clean_ops}
         if "enroll" in draft:
             clean_draft["enroll"] = _clean_bool(draft, "enroll")
-        return {"member": member, "draft": clean_draft}
+        out_caps: dict[str, Any] = {"member": member, "draft": clean_draft}
+        if "origins" in p:
+            try:
+                out_caps["origins"] = _mate_catalog.clean_origins(p["origins"])
+            except ValueError as exc:
+                raise _fail("invalid_param", str(exc)) from None
+        return out_caps
     if kind == KIND_CREWMATE_GOAL:
         _only(p, {"member", "long_term", "goal_id"})
         out_goal: dict[str, Any] = {
@@ -991,7 +998,7 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
     if kind == KIND_CREWMATE_CHECK_INS:
         _only(p, {"member", *CHECK_IN_FIELDS})
         out_ci: dict[str, Any] = {"member": _member_name(p, "member")}
-        for key in ("daily", "weekly", "monthly"):
+        for key in ("daily", "weekly", "monthly", "heartbeat"):
             if key in p:
                 out_ci[key] = _clean_bool(p, key)
         for key, low, high in (("weekday", 0, 6), ("month_day", 1, _goals.MAX_MONTH_DAY)):
@@ -1005,6 +1012,14 @@ def validate_params(kind: str, params: Any) -> dict[str, Any]:
             if not isinstance(t, str) or not _goals.is_check_in_time(t):
                 raise _fail("invalid_param", "'time' must be HH:MM (24-hour)")
             out_ci["time"] = t
+        if "interval" in p:
+            if not _goals.is_heartbeat_interval(p["interval"]):
+                raise _fail(
+                    "invalid_param",
+                    "'interval' must be one of "
+                    + ", ".join(str(m) for m in _goals.HEARTBEAT_INTERVALS),
+                )
+            out_ci["interval"] = p["interval"]
         if len(out_ci) == 1:
             raise _fail("invalid_param", "give at least one check-in or its timing")
         return out_ci
@@ -1837,6 +1852,14 @@ def build_preview(
             # A server this card defines runs its launch line in the member's
             # next session: shown in full, and marked as running code.
             out["changes"] += _server_spec_rows(server, spec)
+        origins = p.get("origins") or {}
+        gateway = set(context.get("gateway") or ())
+        out["changes"] += _mate_catalog.origin_rows(p["draft"], origins, gateway, impact, _display)
+        # Named additions read as one plain line each; the raw rows (sections,
+        # launch lines, origins) stay on the card behind its Details.
+        summary = _mate_catalog.addition_summary(p["draft"], origins, gateway, impact, _display)
+        if summary:
+            out["changes"] = summary + [{**row, "detail": True} for row in out["changes"]]
         out["scope"] = {"members": [label], "count": 1, "only_this_member": True}
         # An auto-approval this draft grants widens what the member runs without
         # asking, and a launch line runs third-party code. Both can be true at
@@ -1848,6 +1871,12 @@ def build_preview(
         # both would surface as ``code_exec`` and silently drop the "runs
         # without asking" acknowledgement the plain-widen draft requires.
         approval_expanded = any(i.get("approval_expanded") for i in impact)
+        # Named additions that are all servers this gateway already runs bring
+        # no new outside code: the plain line says what runs without asking,
+        # and the warning and its checkbox are kept for a registry install.
+        known_code = bool(summary) and _mate_catalog.only_gateway_servers(p["draft"], gateway)
+        if known_code:
+            launched, approval_expanded = [], False
         out["widen"] = approval_expanded
         if launched:
             out["risk"] = RISK_CODE_EXEC

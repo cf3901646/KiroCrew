@@ -18,7 +18,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, Callable
 
-from kiro_crew import agent_state, kiro_cli
+from kiro_crew import agent_state, kiro_cli, mate_capabilities
 from kiro_crew.agent import (
     OWNED_KIRO_AGENT_FILES,
     _is_confirmed_managed_dashboard_author,

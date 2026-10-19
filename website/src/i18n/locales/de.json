@@ -190,9 +190,11 @@
     "source_unknown": "Unbekannte Quelle",
     "scope_global": "Globaler Geltungsbereich",
     "scope_project": "Projektgeltungsbereich",
+    "scope_mate": "Gehört diesem Crewmitglied",
     "mode_shared": "Vorlage unverändert (ohne Überschreibungen)",
     "mode_legacy_snapshot": "Folgt nicht der Vorlage (eigene Kopie)",
     "mode_inherited": "Folgt der Vorlage",
+    "mode_mate": "Eigene Konfiguration (direkt bearbeitet)",
     "version": "Prüfversion: {{revision}}",
     "savedVersion": "Gespeicherte Version: {{revision}}",
     "unsavedDraft": "Nicht gespeicherter Entwurf",
@@ -200,6 +202,7 @@
     "runtime_applied": "Der Server meldet diese Version als geladen.",
     "runtime_failed": "Laden zur Laufzeit fehlgeschlagen. Die gespeicherte Version bleibt erhalten.",
     "runtime_unverified": "Die Nutzung zur Laufzeit wurde nicht geprüft.",
+    "runtime_owned": "Dieses Crewmitglied besitzt diese Konfiguration.",
     "newRuntime": "Aktive Sitzungen bleiben beim Speichern unverändert. Eine neue Laufzeitumgebung lädt die gespeicherte Version.",
     "backendUnsupported": "Speichern funktioniert, aber neue Chats mit {{name}} starten nicht, denn sie nutzen ein Backend ({{backend}}), das gespeicherte Fähigkeiten ignoriert. Zum Beheben führe den Befehl unten in einem Terminal aus und starte dann einen neuen Chat.",
     "backendToolLimits": "Speichern funktioniert, aber neue Chats mit {{name}} starten nicht, denn ihr Backend ({{backend}}) kann einzelne Tools in der Verbindung {{servers}} nicht ausschalten. Zum Beheben geh zu {{tab}} und schalte die ganze Verbindung aus oder diese Tools wieder ein.",
@@ -283,7 +286,8 @@
     "withheldUnexplained": "{{productName}} speichert diese Freigabe nicht, und keine bekannte Einstellung erklärt, warum. Melde das als Fehler.",
     "withheldOpenTab": "Tab „MCP-Server“ öffnen (Entwurf bleibt erhalten)",
     "permissionsReview": "Diese Seite kann die Freigaben für {{member}} nicht ändern: Seine Agent-Datei in ~/.kiro/agents enthält handgeschriebene Berechtigungseinstellungen. Entferne sie und drücke dann „Vom Server neu laden“. Dein Entwurf bleibt erhalten. Gemeint sind ein von Hand bearbeiteter permissions-Block, autoAllowReadonly oder eine allowed- bzw. trusted-Liste in toolsSettings.",
-    "unreviewableDrift": "Die Agent-Datei {{file}} von {{member}} wurde außerhalb dieser Seite in einer Einstellung bearbeitet, die diese Seite nicht anzeigen kann, deshalb kann diese Seite die Korrektur nicht schreiben und „Änderungen prüfen“ bleibt ausgeschaltet. Mache diese äußere Bearbeitung in ~/.kiro/agents/{{file}} rückgängig und drücke dann „Vom Server neu laden“."
+    "unreviewableDrift": "Die Agent-Datei {{file}} von {{member}} wurde außerhalb dieser Seite in einer Einstellung bearbeitet, die diese Seite nicht anzeigen kann, deshalb kann diese Seite die Korrektur nicht schreiben und „Änderungen prüfen“ bleibt ausgeschaltet. Mache diese äußere Bearbeitung in ~/.kiro/agents/{{file}} rückgängig und drücke dann „Vom Server neu laden“.",
+    "mateOwned": "{{name}} besitzt diese Konfiguration — Änderungen werden in seiner eigenen Datei gespeichert."
   },
   "api": {
     "client": {
@@ -10033,6 +10037,13 @@
       "scope_count_other": "Betrifft {{count}} Mitglieder",
       "scope_label": "Betrifft",
       "scope_only_this": "Nur dieser Crewmate ändert sich.",
+      "addition_server": "Gib dem Worker von {{name}} {{server}}.",
+      "addition_from_gateway": "Dieses Gateway führt ihn schon aus, es kommt also kein neuer Code hinzu.",
+      "addition_from_registry": "Er wird aus der MCP-Registry ({{id}}) nur für {{name}} installiert.",
+      "addition_from_card": "Er wird auf dieser Karte nur für {{name}} eingerichtet.",
+      "addition_runs_unasked": "Läuft, ohne dich zu fragen: {{tools}}.",
+      "addition_asks_every_time": "Jeder Aufruf fragt dich vorher.",
+      "addition_skill": "Gib dem Worker von {{name}} die Fähigkeit {{skill}}.",
       "secret_hint": "Geht direkt in deine Secrets. {{name}} sieht den Wert nie.",
       "secret_label": "Wert",
       "status_applying": "Wird angewendet…",

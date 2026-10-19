@@ -9,6 +9,9 @@ tiers that follow who owns the field:
   nothing waits on a card. Only when the user has just asked for the change:
   the tool description says so, and the gateway admits only a turn the user
   sent (:mod:`kiro_crew.dashboard.handlers.member_self`).
+* **Catalog** -- ``find_capabilities`` reads what the crewmate's worker has and
+  what it could be given (:mod:`kiro_crew.dashboard.handlers.member_capability_catalog`);
+  a read, admitted on any turn in the crewmate's own thread.
 * **Goals** -- ``goal_read``, ``key_result_progress`` and ``save_goal_report``
   read the goal, record key-result readings and file a weekly or monthly
   report at once, with no card: a reading is the crewmate's own measurement
@@ -204,12 +207,34 @@ def _tool_definitions() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "find_capabilities",
+            "description": (
+                "Read what your worker can use and what it could be given: first the "
+                "MCP servers, tools that run without asking and skills your worker "
+                "already has; then the servers and skills this gateway has loaded that "
+                "your worker lacks; then, when you pass a query, matching servers from "
+                "the MCP registry. Call it when a piece of work needs something your "
+                "worker reports it does not have. It changes nothing; when it names "
+                "the addition the work needs, call request_capabilities with it "
+                "straight away: the card is how the user is asked."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {"query": {"type": "string", "maxLength": 200}},
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "request_capabilities",
             "description": (
-                "Ask the user for a change to your tools, tool approvals, MCP servers "
-                "or skills. draft is {operations: [{section, id, action, value?}], "
-                "enroll?} in the shape get_member_capabilities (kirocrew-guide) "
-                "returns for you; call that first. " + _CARD_NOTE
+                "Ask the user for a change to your worker's tools, tool approvals, MCP "
+                "servers or skills. To add something find_capabilities listed, pass "
+                "draft {additions: [{server, source: gateway | registry, registry_id?, "
+                "auto_approve?: [tool]} | {skill}]}: the card names where each comes "
+                "from and exactly which tools would run without asking, and the "
+                "worker gets it at its next start. Any other change is draft "
+                "{operations: [{section, id, action, value?}], enroll?} in the shape "
+                "get_member_capabilities (kirocrew-guide) returns for you. " + _CARD_NOTE
             ),
             "inputSchema": {
                 "type": "object",
@@ -315,7 +340,10 @@ def _tool_definitions() -> list[dict[str, Any]]:
                 "daily is the Daily Goal Reminder (you read your goal and record where "
                 "each milestone stands), weekly the Weekly report (on weekday, 0 = "
                 "Sunday), monthly the Monthly review (on month_day, 1-28); all run at "
-                "time (HH:MM, 24-hour). Give only what changes. Explain in one plain "
+                "time (HH:MM, 24-hour). heartbeat wakes you every interval minutes "
+                "(15, 30, 60, 120 or 240) to move your work forward on your own and "
+                "uses credits on each wake, so propose it only when the work suits "
+                "it. Give only what changes. Explain in one plain "
                 "sentence what each one you propose does for the user before you call "
                 "it; they need a goal first. " + _CARD_NOTE
             ),
@@ -325,9 +353,11 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     "daily": {"type": "boolean"},
                     "weekly": {"type": "boolean"},
                     "monthly": {"type": "boolean"},
+                    "heartbeat": {"type": "boolean"},
                     "weekday": {"type": "integer", "minimum": 0, "maximum": 6},
                     "month_day": {"type": "integer", "minimum": 1, "maximum": _goals.MAX_MONTH_DAY},
                     "time": {"type": "string", "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"},
+                    "interval": {"type": "integer", "enum": list(_goals.HEARTBEAT_INTERVALS)},
                     "reason": {"type": "string", "maxLength": 500},
                 },
                 "additionalProperties": False,
@@ -381,6 +411,24 @@ def _tool_definitions() -> list[dict[str, Any]]:
                     },
                 },
                 "required": ["kind", "title", "markdown"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "save_notes",
+            "description": (
+                "Replace your notes: the [CURRENT ASSIGNMENT] section you keep for "
+                "your future self (current priorities, work in flight, pointers to "
+                "what your workers made). Pass the whole new text; it replaces the "
+                "old one, and an empty text clears it. Saved at once and shown on "
+                "your Notes tab."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "maxLength": _goals.NOTES_MAX_CHARS},
+                },
+                "required": ["text"],
                 "additionalProperties": False,
             },
         },

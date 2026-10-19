@@ -256,6 +256,18 @@ def schedule_milestones_nudge(state: Any, slug: str, member: str) -> None:
         lambda rec, tools: milestones_prompt(rec, has_mate_tools=tools),
         "milestones confirmed",
     )
+def capabilities_prompt(added: str) -> str:
+    """The hidden turn after the user applies the crewmate's capabilities card.
+
+    Without it the grant sat unused: a card press starts no turn, and a worker
+    that was already running cannot see what was added, so nothing moved until
+    the user typed. *added* is the card's title, which names what was added.
+    """
+    return crewmate_prompts.fill(
+        "goal_setup.capabilities_added", added=member_goals.scrub_text(added)
+    )
+
+
 
 
 def removed_prompt(rec: dict[str, Any], goal_id: str, *, has_mate_tools: bool = True) -> str | None:

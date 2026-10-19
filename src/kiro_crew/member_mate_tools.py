@@ -232,7 +232,12 @@ def grant_mate_tools_to_new_member(
 
 
 def _grant(member: str, catalog: Callable[[str], dict[str, str]]) -> str:
-    from kiro_crew.agent_capabilities import CapabilityError, CapabilityService
+    """The outcome for crewmate *member*; writes nothing to its own file.
+
+    ``catalog`` is unused, kept in the signature so callers and tests are
+    unchanged.
+    """
+    from kiro_crew.acp.mate_config import has_mate_config
     from kiro_crew.agent_files import AGENT_FILENAME
     from kiro_crew.config.loader import KiroCrewConfig, _invalidate_config_cache
 
@@ -242,43 +247,14 @@ def _grant(member: str, catalog: Callable[[str], dict[str, str]]) -> str:
         return NOT_A_MEMBER
     if binding.kiro_agent == Path(AGENT_FILENAME).stem:
         return DEFAULT_TEMPLATE
-    service = CapabilityService(catalog)
-    try:
-        view = service.get(member)
-    except CapabilityError as exc:
-        logger.info("mate tools not added to %r: %s", member, exc.code)
-        return f"refused:{exc.code}"
-    if view.get("mode") != "shared":
-        return ALREADY_ENROLLED
-    ops = _operations(view)
-    if isinstance(ops, str):
-        return ops
-    if not _policy_permits(member):
-        return POLICY_WITHHOLDS
-    if any(op["section"] == "mcpServers" for op in ops):
-        from kiro_crew.agent_capabilities import _member_platform_transport
-
-        if _member_platform_transport(MATE_SERVER) is None:
-            return SERVER_UNAVAILABLE
-    body = {"revision": view["revision"], "enroll": True, "operations": ops}
-    try:
-        preview = service.preview(member, body)
-        if preview.get("backend_warning"):
-            return BACKEND_UNSUPPORTED
-        service.put(member, {**body, "preview_token": preview["preview_token"]})
-    except CapabilityError as exc:
-        logger.info("mate tools not added to %r: %s", member, exc.code)
-        return f"refused:{exc.code}"
-    try:
-        from kiro_crew.sel import sel
-
-        sel().log_api_access(
-            caller="system",
-            operation="member_capabilities.mate_tools_granted",
-            outcome="success",
-            source="agent_create",
-            resources=member,
-        )
-    except Exception:
-        logger.debug("SEL audit unavailable for the mate grant", exc_info=True)
-    return GRANTED
+    # The eager copy must have run first and repointed the binding at the mate
+    # id. If it did not (its best-effort copy failed), there is no owned file to
+    # edit; leave the shared pointer as-is rather than minting one here.
+    if binding.kiro_agent != member or not has_mate_config(member):
+        return MATE_FILE_MISSING
+    # A crewmate on its own file chats on the conductor, which the gateway
+    # builds with ``kirocrew-mate`` whatever the template carried, and its file
+    # only extends the worker, whose base declares the server and always wins.
+    # So nothing is written: an entry here could only be an override with no
+    # transport, which a session that ran the file would wait on and never start.
+    return PLATFORM_PROVIDED

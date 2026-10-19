@@ -191,9 +191,11 @@
     "source_unknown": "未知来源",
     "scope_global": "全局范围",
     "scope_project": "项目范围",
+    "scope_mate": "归这位队友所有",
     "mode_shared": "原样使用父模板（无覆盖项）",
     "mode_legacy_snapshot": "不跟随父级（自己的副本）",
     "mode_inherited": "跟随父级",
+    "mode_mate": "专属配置（直接编辑）",
     "version": "评审版本：{{revision}}",
     "savedVersion": "已保存版本：{{revision}}",
     "unsavedDraft": "未保存的草稿",
@@ -201,6 +203,7 @@
     "runtime_applied": "服务器报告已加载此版本。",
     "runtime_failed": "运行时加载失败，已保存的版本仍保留。",
     "runtime_unverified": "尚未验证运行时使用的版本。",
+    "runtime_owned": "此配置归这位队友所有。",
     "newRuntime": "保存不改变活动会话，新运行时才加载已保存的版本。",
     "backendUnsupported": "保存可以完成，但与 {{name}} 的新聊天无法启动。这些聊天使用的后端（{{backend}}）会忽略已保存能力。修复方法：在终端中运行下方命令，然后开始新聊天。",
     "backendToolLimits": "保存可以完成，但与 {{name}} 的新聊天无法启动。它们的后端（{{backend}}）无法单独关闭 {{servers}} 连接中的工具。修复方法：前往 {{tab}}，关闭整个连接，或重新打开这些工具。",
@@ -273,7 +276,8 @@
     "discardDraftBody": "放弃 {{name}} 的能力编辑后，编辑器会保持打开。已保存的值和隐藏的凭据不会改变。其他成员不受影响。",
     "discardDraftConfirm": "放弃草稿",
     "driftHint": "{{member}} 的 agent 文件在此页面之外被编辑过。点击“评审变更”，即可把那次外部编辑和你自己的草稿一起看到。评审之后，保存会写入修复，或告诉你为何无法写入。",
-    "unreviewableDrift": "{{member}} 的 agent 文件 {{file}} 在此页面之外被编辑过，改动的设置此页面无法显示，因此此页面无法写入修复，“评审变更”保持禁用。请在 ~/.kiro/agents/{{file}} 中撤销那次外部编辑，然后点击“从服务器重新加载”。"
+    "unreviewableDrift": "{{member}} 的 agent 文件 {{file}} 在此页面之外被编辑过，改动的设置此页面无法显示，因此此页面无法写入修复，“评审变更”保持禁用。请在 ~/.kiro/agents/{{file}} 中撤销那次外部编辑，然后点击“从服务器重新加载”。",
+    "mateOwned": "{{name}} 拥有此配置，修改会保存到它自己的文件。"
   },
   "api": {
     "client": {
@@ -9890,6 +9894,13 @@
       "scope_count_other": "影响 {{count}} 个成员",
       "scope_label": "影响范围",
       "scope_only_this": "只改这个队友。",
+      "addition_server": "给 {{name}} 的工作者加上 {{server}}。",
+      "addition_from_gateway": "这个网关已经在运行它，不会引入新代码。",
+      "addition_from_registry": "它从 MCP 注册表（{{id}}）安装，只给 {{name}} 用。",
+      "addition_from_card": "它在这张卡片上设置，只给 {{name}} 用。",
+      "addition_runs_unasked": "无需询问你即可运行：{{tools}}。",
+      "addition_asks_every_time": "每次调用都会先问你。",
+      "addition_skill": "给 {{name}} 的工作者加上 {{skill}} 技能。",
       "secret_hint": "直接存进你的凭据，{{name}} 看不到。",
       "secret_label": "值",
       "status_applying": "正在应用…",

@@ -188,6 +188,13 @@ tools, MCP servers and skills (`request_capabilities`); each ask is a change
 card with a button, and nothing changes until you press it. Its workspace,
 memory store and template are not the crewmate's to ask for.
 
+When its worker needs a tool or a skill it does not have, the crewmate looks up
+what this gateway or the MCP registry offers and asks you for the addition on a
+card. The card says where each server comes from and exactly which of its tools
+would run without asking. Pressing it adds the server or skill to this
+crewmate's own settings only, not to your MCP config, and its worker has it the
+next time one starts.
+
 ### Its worker
 
 A crewmate hands longer work to a **worker**: a session it opens with
