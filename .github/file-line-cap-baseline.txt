@@ -56,4 +56,3 @@
 2641 test/test_spawn_audit.py
 3093 test/test_subagent.py
 2460 test/test_taskq_runner_adapter.py
-2125 website/src/pages/AppDetailPage.tsx
