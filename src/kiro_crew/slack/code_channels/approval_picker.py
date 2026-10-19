@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,6 +58,8 @@ FAILED_TEXT = "⚠️ Could not change the approval mode: {reason}"
 NO_SESSION_TEXT = "This channel's session isn't open right now. Try again in a moment."
 NOT_ALLOWED_TEXT = "⛔ You can't change this channel's approval mode."
 NOT_THIS_CARD_TEXT = "⛔ That approval isn't this channel's to trust."
+NOT_LIVE_TEXT = "⛔ That approval isn't waiting any more, so nothing changed."
+STALE_REASON = "the approval is no longer waiting"
 TRUSTED_CARD_TEXT = "🤝 Approved, and this channel is now on Trust (<@{user}>)."
 
 
@@ -112,14 +115,23 @@ def reset() -> None:
     _locks.clear()
 
 
-async def _apply(state: Any, slot: Any, mode: str, user: str) -> tuple[bool, str]:
-    """The dashboard picker's mutation on *slot*; ``(ok, error)``."""
+async def _apply(
+    state: Any, slot: Any, mode: str, user: str, still_live: Callable[[], bool] | None = None
+) -> tuple[bool, str]:
+    """The dashboard picker's mutation on *slot*; ``(ok, error)``.
+
+    *still_live*, when given, is asked once more after the last await and right
+    before the mutation: a change asked for on behalf of one approval card must
+    not land once that card's prompt has been answered or has expired.
+    """
     from kiro_crew.dashboard.chat_handlers import apply_approval_mode
     from kiro_crew.safety_override import approval_mode_permitted
 
     # The governance check ``POST /api/chat/mode`` makes before it mutates.
     if not await asyncio.to_thread(approval_mode_permitted, mode):
         return False, "the approval-modes policy does not allow it"
+    if still_live is not None and not still_live():
+        return False, STALE_REASON
     resp = await apply_approval_mode(
         state,
         mode=mode,
@@ -138,10 +150,20 @@ async def _apply(state: Any, slot: Any, mode: str, user: str) -> tuple[bool, str
     return True, ""
 
 
-async def set_channel_mode(binding: Binding, mode: str, user: str, *, via: str) -> ModeResult:
+async def set_channel_mode(
+    binding: Binding,
+    mode: str,
+    user: str,
+    *,
+    via: str,
+    still_live: Callable[[], bool] | None = None,
+) -> ModeResult:
     """Put *binding*'s session on *mode* for *user*, who is already authorized.
 
-    On a change to Trust, posts the channel's warning line.
+    *still_live* ties the change to one approval card: it is checked under the
+    channel lock and again right before the mutation, and a card whose prompt
+    is no longer waiting changes no mode. On a change to Trust, posts the
+    channel's warning line.
     """
     channel = binding.channel_id
     resources = f"channel={channel} user={user} mode={mode} via={via}"
@@ -154,14 +176,20 @@ async def set_channel_mode(binding: Binding, mode: str, user: str, *, via: str) 
         _audit("error", resources, "session unavailable")
         return ModeResult("unavailable", NO_SESSION_TEXT)
     async with _lock(channel):
+        if still_live is not None and not still_live():
+            _audit("denied", resources, STALE_REASON)
+            return ModeResult("refused", NOT_LIVE_TEXT)
         if current_mode(slot) == mode:
             _audit("allowed", f"{resources} result=unchanged")
             return ModeResult("unchanged", f"ℹ️ This channel is already on *{label(mode)}*.")
         try:
-            ok, error = await _apply(state, slot, mode, user)
+            ok, error = await _apply(state, slot, mode, user, still_live)
         except Exception:
             logger.warning("code channel %s: approval mode change failed", channel, exc_info=True)
             ok, error = False, "the change failed"
+        if not ok and error == STALE_REASON:
+            _audit("denied", resources, STALE_REASON)
+            return ModeResult("refused", NOT_LIVE_TEXT)
         if not ok:
             _audit("error", f"{resources} result=refused", error)
             return ModeResult("refused", FAILED_TEXT.format(reason=error))
@@ -290,7 +318,20 @@ async def handle_trust_call(orch: Any, payload: dict[str, Any]) -> bool:
     request_id = str(getattr(entry, "request_id", ""))
     futures = getattr(slot, "_approval_futures", None) or {}
     expected = futures.get(request_id)
-    outcome = await set_channel_mode(binding, "trust", user, via="approval_card")
+
+    def _live() -> bool:
+        # The card's own prompt, still waiting on the channel's slot.
+        return (
+            expected is not None
+            and not expected.done()
+            and getattr(slot, "_approval_futures", {}).get(request_id) is expected
+        )
+
+    if not _live():
+        _audit("denied", resources, STALE_REASON)
+        await _ephemeral(channel, user, NOT_LIVE_TEXT)
+        return True
+    outcome = await set_channel_mode(binding, "trust", user, via="approval_card", still_live=_live)
     if outcome.result not in ("set", "unchanged"):
         await _ephemeral(channel, user, outcome.text)
         return True

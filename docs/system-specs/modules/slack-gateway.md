@@ -2022,9 +2022,13 @@ the hooks never fire, and `kirocrew-core` lists none of the tools.
   lineage live, applies the code-channel gates and resolves the worker's own future
   with `state.resolve_slot_approval` pinned to the future the card was posted for
   (never a state-wide id lookup). Trust puts the channel's session on Trust; running
-  workers keep their mode. `_run_chat`'s `finally` calls `worker_approvals.finish`,
-  which updates the card in place (approved / declined in the dashboard, timed out)
-  unless a click already did. SEL: `slack.code_channel.worker_approval`.
+  workers keep their mode. A Trust click on either card changes no mode unless the
+  card's prompt is still waiting right before the mutation. `_run_chat` starts the
+  relay as a task (no await between the future's registration and its `try`) and its
+  `finally` calls `worker_approvals.finish`, which updates the card in place
+  (approved / declined in the dashboard, timed out, or ended by the host) unless a
+  click already did. Code-channel cards escape mrkdwn entities in the footer and the
+  tool arguments. SEL: `slack.code_channel.worker_approval`.
 
 ## Dependencies
 

@@ -352,3 +352,36 @@ def test_the_dispatcher_refuses_a_non_owner_before_the_trust_handler(
     assert chan.slack.ephemerals and chan.slack.ephemerals[-1][1] == "USTRANGER"
     denied = chan.sel.ops("slack.interactive")
     assert denied and denied[-1]["outcome"] == "denied"
+
+
+def test_trust_on_a_spent_channel_card_changes_no_mode(chan: Any, monkeypatch: Any) -> None:
+    """The prompt is answered while the click's policy check is in flight."""
+    ts = _post_card(chan)
+
+    async def click() -> asyncio.Future:
+        fut = asyncio.get_running_loop().create_future()
+        chan.slot._approval_futures[REQUEST] = fut
+
+        def permitted(_mode: str) -> bool:
+            fut.get_loop().call_soon_threadsafe(fut.set_result, "rejected")
+            import time
+
+            time.sleep(0.05)
+            return True
+
+        monkeypatch.setattr(safety_override_mod, "approval_mode_permitted", permitted)
+        assert await approval_picker.handle_trust_call(chan.orch, _click(OWNER, ts))
+        return fut
+
+    fut = asyncio.run(click())
+    assert fut.result() == "rejected"
+    assert chan.slot._trust is False
+    assert not [r for r in chan.mode_rows if r["operation"] == "mode_change:trust"]
+    assert chan.slack.ephemerals[-1][2] == approval_picker.NOT_LIVE_TEXT
+
+
+def test_trust_on_a_card_whose_prompt_is_gone_changes_no_mode(chan: Any) -> None:
+    ts = _post_card(chan)  # no future registered: the prompt was already answered
+    assert asyncio.run(approval_picker.handle_trust_call(chan.orch, _click(OWNER, ts)))
+    assert chan.slot._trust is False
+    assert _decisions(chan)[-1]["outcome"] == "denied"

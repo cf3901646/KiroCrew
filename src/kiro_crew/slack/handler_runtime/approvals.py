@@ -398,6 +398,9 @@ def _build_approval_blocks(
         # Security: scan for exfiltration URLs and credentials before posting
         sanitized, _ = redact_exfiltration_urls(event.tool_input)
         sanitized, _ = redact_credentials(sanitized)
+        # The input can close the code fence itself, so on a code channel's card
+        # its entities are escaped too, not only the footer's.
+        sanitized = _esc(sanitized)
         # Truncate with marker if exceeds Slack limit
         if len(sanitized) > _SLACK_SECTION_TEXT_LIMIT:
             detail = (

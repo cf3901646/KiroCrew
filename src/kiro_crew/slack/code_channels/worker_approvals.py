@@ -65,6 +65,7 @@ ANSWERED_ELSEWHERE = {
     "approved": "✅ Approved in the dashboard.",
     "rejected": "❌ Declined in the dashboard.",
     "timeout": "⌛ No answer in time, so it was declined.",
+    "ended": "⏹ The worker stopped before anyone answered.",
 }
 _TITLE_LIMIT = 120
 
@@ -158,6 +159,38 @@ def _blocks(header: str, request_id: str, title: str, tool_input: str) -> list[d
     return blocks
 
 
+def start(
+    state: Any,
+    slot: Any,
+    session_key: str,
+    request_id: Any,
+    title: str,
+    tool_input: str,
+    future: asyncio.Future[str],
+    *,
+    perm_meta: Any,
+    linked_ts: str | None,
+) -> asyncio.Task[WorkerCard | None] | None:
+    """Start relaying *slot*'s prompt; the task for :func:`finish`, or None.
+
+    Synchronous on purpose: ``_run_chat`` calls it between registering the
+    approval future and entering the ``try`` whose ``finally`` unregisters it,
+    where an ``await`` could be cancelled and strand the future. The post runs
+    as a task, which :func:`finish` (from that ``finally``) awaits or cancels.
+
+    Nothing starts for a prompt born resolved (``"resolved"`` in *perm_meta*), one
+    already mirrored to a linked Slack thread (*linked_ts*), or a slot no code
+    channel's session created.
+    """
+    if linked_ts is not None or "resolved" in (perm_meta or {}):
+        return None
+    if getattr(slot, "_slack_linked", False) or not getattr(slot, "_created_by", ""):
+        return None
+    return asyncio.ensure_future(
+        relay(state, slot, session_key, request_id, title, tool_input, future)
+    )
+
+
 async def relay(
     state: Any,
     slot: Any,
@@ -219,22 +252,50 @@ async def _update(card: WorkerCard, line: str) -> None:
         logger.debug("worker approval card not updated", exc_info=True)
 
 
-async def finish(card: WorkerCard | None, outcome: str, *, timed_out: bool) -> None:
-    """The worker's prompt is decided: retire *card* and, unless a click here
+def settled_line(outcome: str, *, deny_cause: str, host_ended: bool) -> str:
+    """What a card decided outside Slack says, from ``_run_chat``'s own attribution.
+
+    A host decline (*deny_cause*: the window ran out, no budget left, ...) or a
+    turn the host ended under the prompt (*host_ended*: cancelled, stopped) is
+    never reported as a person's answer in the dashboard.
+    """
+    from kiro_crew.dashboard.state import DENY_CAUSE_APPROVAL_TIMEOUT
+
+    if deny_cause == DENY_CAUSE_APPROVAL_TIMEOUT:
+        return ANSWERED_ELSEWHERE["timeout"]
+    if deny_cause or host_ended:
+        return ANSWERED_ELSEWHERE["ended"]
+    if str(outcome).startswith("approved"):
+        return ANSWERED_ELSEWHERE["approved"]
+    return ANSWERED_ELSEWHERE["rejected"]
+
+
+async def finish(
+    relay_task: asyncio.Task[WorkerCard | None] | None,
+    outcome: str,
+    *,
+    deny_cause: str,
+    host_ended: bool,
+) -> None:
+    """The worker's prompt is decided: retire its card and, unless a click here
     already said who answered, update it in place to say how. Never raises."""
+    if relay_task is None:
+        return
+    try:
+        card = await relay_task
+    except asyncio.CancelledError:
+        if relay_task.cancelled():
+            return  # the relay itself was cancelled: nothing posted to retire
+        raise  # this turn is being cancelled again: never swallow it
+    except Exception:
+        return
     if card is None:
         return
     try:
         _cards.pop(f"{card.channel}:{card.ts}", None)
         if card.answered:
             return
-        if timed_out:
-            line = ANSWERED_ELSEWHERE["timeout"]
-        elif str(outcome).startswith("approved"):
-            line = ANSWERED_ELSEWHERE["approved"]
-        else:
-            line = ANSWERED_ELSEWHERE["rejected"]
-        await _update(card, line)
+        await _update(card, settled_line(outcome, deny_cause=deny_cause, host_ended=host_ended))
     except Exception:
         logger.debug("worker approval card not retired", exc_info=True)
 
@@ -279,7 +340,22 @@ async def handle_click(orch: Any, payload: dict[str, Any]) -> bool:
         return True
     line = APPROVED_BY if action_id == APPROVE_ACTION_ID else REJECTED_BY
     if action_id == TRUST_ACTION_ID:
-        outcome = await set_channel_mode(binding, "trust", user, via="worker_card")
+
+        def _live() -> bool:
+            # Still this channel's worker, still waiting on this very prompt.
+            from kiro_crew.slack.code_channels.binding import bound_slot
+
+            channel_slot = bound_slot(state, binding)
+            return (
+                not card.future.done()
+                and worker._approval_futures.get(card.request_id) is card.future
+                and channel_slot is not None
+                and getattr(worker, "_created_by", "") == getattr(channel_slot, "key", None)
+            )
+
+        outcome = await set_channel_mode(
+            binding, "trust", user, via="worker_card", still_live=_live
+        )
         if outcome.result not in ("set", "unchanged"):
             await _ephemeral(channel, user, outcome.text)
             return True

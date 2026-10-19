@@ -22,6 +22,7 @@ from slack_code_channels_helpers import OWNER
 from test_slack_code_channel_agent_surface import CH, SLOT, env  # noqa: F401
 from test_slack_code_channel_trust_from_slack import _slot, chan  # noqa: F401
 
+from kiro_crew.dashboard.state import DENY_CAUSE_APPROVAL_NO_BUDGET, DENY_CAUSE_APPROVAL_TIMEOUT
 from kiro_crew.slack.code_channels import approval_picker
 from kiro_crew.slack.code_channels import worker_approvals as wa
 
@@ -59,6 +60,13 @@ async def _run_relay(e: Any, slot: Any | None = None, tool_input: str = "npm tes
         e.state, slot, f"dashboard:{slot.key}", REQUEST, "Run shell", tool_input, fut
     )
     return card, fut
+
+
+def _done(card: Any) -> asyncio.Future:
+    """A finished relay task stand-in carrying *card*."""
+    fut = asyncio.get_running_loop().create_future()
+    fut.set_result(card)
+    return fut
 
 
 def _click(user: str, card: Any, action_id: str) -> dict[str, Any]:
@@ -148,7 +156,7 @@ def test_the_owner_answers_a_worker_approval(
     async def go() -> tuple[Any, asyncio.Future]:
         card, fut = await _run_relay(relay)
         assert await wa.handle_click(relay.orch, _click(OWNER, card, action_id))
-        await wa.finish(card, fut.result(), timed_out=False)
+        await wa.finish(_done(card), fut.result(), deny_cause="", host_ended=False)
         return card, fut
 
     card, fut = asyncio.run(go())
@@ -202,20 +210,22 @@ def test_trust_this_channel_on_a_worker_card(relay: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    ("outcome", "timed_out", "key"),
+    ("outcome", "deny_cause", "host_ended", "key"),
     [
-        ("approved", False, "approved"),
-        ("rejected", False, "rejected"),
-        ("rejected", True, "timeout"),
+        ("approved", "", False, "approved"),
+        ("rejected", "", False, "rejected"),
+        ("rejected", DENY_CAUSE_APPROVAL_TIMEOUT, False, "timeout"),
+        ("rejected", DENY_CAUSE_APPROVAL_NO_BUDGET, False, "ended"),
+        ("rejected", "", True, "ended"),
     ],
 )
 def test_a_prompt_decided_elsewhere_updates_the_card_in_place(
-    relay: Any, outcome: str, timed_out: bool, key: str
+    relay: Any, outcome: str, deny_cause: str, host_ended: bool, key: str
 ) -> None:
     async def go() -> Any:
         card, fut = await _run_relay(relay)
-        fut.set_result(outcome)  # the dashboard (or the window) decided it
-        await wa.finish(card, outcome, timed_out=timed_out)
+        fut.set_result(outcome)  # the dashboard, the window or the host decided it
+        await wa.finish(_done(card), outcome, deny_cause=deny_cause, host_ended=host_ended)
         return card
 
     card = asyncio.run(go())
@@ -226,15 +236,129 @@ def test_a_prompt_decided_elsewhere_updates_the_card_in_place(
     assert f"{CH}:{card.ts}" not in wa._cards
 
 
+# ── Starting the relay from the runner ────────────────────────────────────
+
+
+@pytest.mark.parametrize("case", ["born_resolved", "already_linked", "no_creator", "linked_slot"])
+def test_start_relays_nothing_it_must_not(relay: Any, case: str) -> None:
+    meta: dict[str, Any] = {}
+    linked_ts = None
+    if case == "born_resolved":
+        meta = {"resolved": "rejected"}
+    elif case == "already_linked":
+        linked_ts = "400.000001"
+    elif case == "no_creator":
+        relay.worker._created_by = ""
+    elif case == "linked_slot":
+        relay.worker._slack_linked = True
+
+    async def go() -> Any:
+        fut = asyncio.get_running_loop().create_future()
+        return wa.start(
+            relay.state,
+            relay.worker,
+            WORKER_SESSION,
+            REQUEST,
+            "Run shell",
+            "ls",
+            fut,
+            perm_meta=meta,
+            linked_ts=linked_ts,
+        )
+
+    assert asyncio.run(go()) is None
+    assert relay.slack.blocks_posts == []
+
+
+def test_start_posts_in_a_task_and_finish_retires_it(relay: Any) -> None:
+    assert not inspect.iscoroutinefunction(wa.start)  # never an await before the runner's try
+
+    async def go() -> Any:
+        fut = asyncio.get_running_loop().create_future()
+        relay.worker._approval_futures[REQUEST] = fut
+        task = wa.start(
+            relay.state,
+            relay.worker,
+            WORKER_SESSION,
+            REQUEST,
+            "Run shell",
+            "ls",
+            fut,
+            perm_meta={},
+            linked_ts=None,
+        )
+        assert isinstance(task, asyncio.Task)
+        fut.set_result("approved")
+        await wa.finish(task, "approved", deny_cause="", host_ended=False)
+        return task
+
+    task = asyncio.run(go())
+    assert (
+        relay.slack.blocks_posts and relay.slack.updates[-1][2] == wa.ANSWERED_ELSEWHERE["approved"]
+    )
+    assert task.done()
+
+
+def test_finish_absorbs_a_cancelled_relay(relay: Any) -> None:
+    async def go() -> None:
+        async def slow() -> Any:
+            await asyncio.sleep(10)
+
+        task = asyncio.ensure_future(slow())
+        await asyncio.sleep(0)
+        task.cancel()
+        await wa.finish(task, "rejected", deny_cause="", host_ended=True)
+
+    asyncio.run(go())
+    assert relay.slack.updates == []
+
+
 def test_the_session_runner_relays_and_retires_worker_cards() -> None:
-    """_run_chat hands an unlinked prompt to the relay and retires it in the finally."""
+    """_run_chat starts the relay without an await and retires it in the finally."""
     from kiro_crew.dashboard import chat_runner
 
     src = inspect.getsource(chat_runner._run_chat)
-    assert "_worker_card = await relay_worker_approval(" in src
-    assert "await finish_worker_approval(" in src
-    assert chat_runner.relay_worker_approval is wa.relay
+    assert "_worker_relay = start_worker_approval_relay(" in src
+    assert "await start_worker_approval_relay" not in src
+    assert "perm_meta=perm_meta" in src and "linked_ts=_slack_approval_ts" in src
+    assert "deny_cause=_host_deny_cause" in src
+    assert "host_ended=bool(_host_cancelled or _host_stopped)" in src
+    assert chat_runner.start_worker_approval_relay is wa.start
     assert chat_runner.finish_worker_approval is wa.finish
+
+
+# ── A card spent while the owner's click was in flight ────────────────────
+
+
+def test_trust_on_a_spent_worker_card_changes_no_mode(relay: Any, monkeypatch: Any) -> None:
+    from kiro_crew import safety_override as safety_override_mod
+
+    async def go() -> tuple[Any, asyncio.Future]:
+        card, fut = await _run_relay(relay)
+
+        def permitted(_mode: str) -> bool:
+            # The dashboard answers the prompt while the policy check is in flight.
+            fut.get_loop().call_soon_threadsafe(fut.set_result, "rejected")
+            import time
+
+            time.sleep(0.05)
+            return True
+
+        monkeypatch.setattr(safety_override_mod, "approval_mode_permitted", permitted)
+        assert await wa.handle_click(relay.orch, _click(OWNER, card, wa.TRUST_ACTION_ID))
+        return card, fut
+
+    _card, fut = asyncio.run(go())
+    assert fut.result() == "rejected"
+    assert relay.slot._trust is False
+    assert not [r for r in relay.mode_rows if r["operation"] == "mode_change:trust"]
+    assert not [p for p in relay.slack.posts if "*Trust*" in p[1]]
+
+
+def test_tool_arguments_cannot_break_out_of_the_code_fence(relay: Any) -> None:
+    asyncio.run(_run_relay(relay, tool_input="echo ``` <!channel> ``` done"))
+    texts = [b["text"]["text"] for b in relay.slack.blocks_posts[-1][1] if b.get("text")]
+    assert all("<!channel>" not in t for t in texts)
 
 
 def test_the_dispatcher_routes_worker_card_controls(relay: Any, monkeypatch: Any) -> None:
