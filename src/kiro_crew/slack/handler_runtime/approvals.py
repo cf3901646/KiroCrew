@@ -314,7 +314,9 @@ def _build_approval_blocks(
 
     In DMs: Approve / Trust / Reject
     In group channels: Approve / Reject only (Trust excluded
-    to limit blast radius — it escalates permissions for the session).
+    to limit blast radius — it escalates permissions for the session), except a
+    Slack Code channel's own session (``channel_trust``), whose channel IS the
+    session: it adds the owner-only "Trust this channel".
     YOLO is owner-only via ``!yolo on`` command — no button.
     """
     # Slack Block Kit requires button `value` to be a string. ACP backends

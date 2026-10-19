@@ -27,6 +27,7 @@ tools run without prompts, and workers the session starts inherit it.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -113,8 +114,6 @@ def reset() -> None:
 
 async def _apply(state: Any, slot: Any, mode: str, user: str) -> tuple[bool, str]:
     """The dashboard picker's mutation on *slot*; ``(ok, error)``."""
-    import json
-
     from kiro_crew.dashboard.chat_handlers import apply_approval_mode
     from kiro_crew.safety_override import approval_mode_permitted
 
