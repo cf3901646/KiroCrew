@@ -387,14 +387,16 @@ async def handle_click(orch: Any, payload: dict[str, Any]) -> bool:
 
 
 async def dispatch_card_click(orch: Any, payload: dict[str, Any], action_id: str) -> bool:
-    """Route a Slack Code approval-card control; True when it was one (handled or dropped).
+    """Route a Slack Code approval control (a card's buttons, the kickoff's Approval
+    mode select); True when it was one (handled or dropped).
 
     Called by ``interactions.dispatch`` after its owner check. The ``channels``
     inbound ceiling applies first, as it does to every other control there.
     """
     from kiro_crew.slack.code_channels import approval_picker
 
-    if action_id not in ACTION_IDS and action_id != approval_picker.TRUST_CALL_ACTION_ID:
+    picker_ids = (approval_picker.TRUST_CALL_ACTION_ID, approval_picker.APPROVAL_SELECT_ACTION_ID)
+    if action_id not in ACTION_IDS and action_id not in picker_ids:
         return False
     from kiro_crew.messaging.identity import channel_inbound_permitted
 
@@ -403,6 +405,8 @@ async def dispatch_card_click(orch: Any, payload: dict[str, Any], action_id: str
         return True
     if action_id in ACTION_IDS:
         await handle_click(orch, payload)
+    elif action_id == approval_picker.APPROVAL_SELECT_ACTION_ID:
+        await approval_picker.handle_select(orch, payload)
     else:
         await approval_picker.handle_trust_call(orch, payload)
     return True

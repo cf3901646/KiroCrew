@@ -80,6 +80,9 @@ def chan(env: Any, monkeypatch: pytest.MonkeyPatch) -> Any:  # noqa: F811
     """A bound code channel whose session is a real-shaped dashboard slot."""
     _bind(env)
     monkeypatch.setattr(approval_picker, "live_config", env.cfg)
+    from kiro_crew.slack.code_channels import agent_picker
+
+    monkeypatch.setattr(agent_picker, "live_config", env.cfg)  # the shared owner gate
     monkeypatch.setattr(slack_handler, "is_allowed_user", lambda u: u in env.allowed)
     slot = _slot()
     env.slot = slot

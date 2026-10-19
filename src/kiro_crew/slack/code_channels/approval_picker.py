@@ -29,7 +29,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,13 +47,33 @@ TRUST_CALL_ACTION_ID = "kc_code_channel_trust_call"
 AUDIT_CALLER = "slack-code-channels"
 OPERATION = "slack.code_channel.approval_mode"
 
-_LABELS = {"normal": "Ask", "trust_reads": "Trust reads", "trust": "Trust"}
+#: The kickoff select's action id (routed by ``slack/interactions.py``).
+APPROVAL_SELECT_ACTION_ID = "kc_code_channel_approval"
+#: Prefix of the select block's id; a fresh suffix per render makes Slack re-draw
+#: the select from ``initial_option`` instead of keeping a refused pick.
+APPROVAL_BLOCK_PREFIX = "kc_code_channel_approval."
+
+#: The modes in picker order: (mode, label, ``/kirocrew trust`` word).
+MODES: tuple[tuple[str, str, str], ...] = (
+    ("normal", "Ask", "ask"),
+    ("trust_reads", "Trust reads", "reads"),
+    ("trust", "Trust", "all"),
+)
+_LABELS = {mode: text for mode, text, _ in MODES}
+_BY_WORD = {word: mode for mode, _, word in MODES}
+
+PICKER_LABEL = "*Approval mode*"
+PICKER_PLACEHOLDER = "Choose a mode"
+SET_NOTE = "Approval mode set to *{label}* by <@{user}>."
+UNKNOWN_TEXT = "❌ `{word}` isn't a mode. Use `/{command} trust ask`, `reads` or `all`."
+CURRENT_TEXT = (
+    "This channel is on *{label}*. Change it with `/{command} trust ask`, `reads` or `all`."
+)
 
 TRUST_CALL_LABEL = "Trust this channel"
 TRUST_WARNING = (
     "⚠️ <@{user}> put this channel on *Trust*: the agent's tools run without asking, "
-    "and workers it starts inherit that. Change it back from the session's approval "
-    "picker on the dashboard."
+    "and workers it starts inherit that. `/{command} trust ask` turns it off."
 )
 FAILED_TEXT = "⚠️ Could not change the approval mode: {reason}"
 NO_SESSION_TEXT = "This channel's session isn't open right now. Try again in a moment."
@@ -85,6 +106,46 @@ def current_mode(slot: Any) -> str:
 
 def label(mode: str) -> str:
     return _LABELS.get(mode, _LABELS["normal"])
+
+
+def _command() -> str:
+    """The app's slash command (``slack.command``), as the person types it."""
+    try:
+        name = str(getattr(getattr(live_config(), "slack", None), "command", "") or "")
+    except Exception:
+        name = ""
+    return name.strip().lstrip("/") or "kirocrew"
+
+
+# ── The kickoff select ────────────────────────────────────────────────────
+
+
+def _option(mode: str) -> dict[str, Any]:
+    return {"text": {"type": "plain_text", "text": label(mode)}, "value": mode}
+
+
+def approval_block(selected: str) -> dict[str, Any]:
+    """The kickoff's Approval mode select, on *selected* (drawn by
+    :func:`.agent_picker.kickoff_blocks`, below the agent picker)."""
+    return {
+        "type": "section",
+        "block_id": f"{APPROVAL_BLOCK_PREFIX}{time.time_ns()}",
+        "text": {"type": "mrkdwn", "text": PICKER_LABEL},
+        "accessory": {
+            "type": "static_select",
+            "action_id": APPROVAL_SELECT_ACTION_ID,
+            "placeholder": {"type": "plain_text", "text": PICKER_PLACEHOLDER},
+            "options": [_option(mode) for mode, _, _ in MODES],
+            "initial_option": _option(selected if selected in _LABELS else "normal"),
+        },
+    }
+
+
+async def _refresh(binding: Binding, note: str = "") -> None:
+    """Re-draw the kickoff from the session's real agent and mode (never raises)."""
+    from kiro_crew.slack.code_channels.agent_picker import refresh_kickoff
+
+    await refresh_kickoff(binding, note=note)
 
 
 # ── The change ────────────────────────────────────────────────────────────
@@ -198,7 +259,8 @@ async def set_channel_mode(
             return ModeResult("refused", FAILED_TEXT.format(reason=error))
         _audit("allowed", f"{resources} result=set")
     if mode == "trust":
-        await _post_channel(channel, TRUST_WARNING.format(user=user))
+        await _post_channel(channel, TRUST_WARNING.format(user=user, command=_command()))
+    await _refresh(binding, note=SET_NOTE.format(label=label(mode), user=user))
     return ModeResult("set", f"✅ This channel is now on *{label(mode)}*.")
 
 
@@ -221,34 +283,15 @@ async def authorize(
 ) -> str | None:
     """None when *user* may change *binding*'s mode; else the refusal to show.
 
-    The gates every code-channel command applies, in its order, each refusal
-    SEL-audited: the workspace, the owner, the code channel and its origin both
-    still admitting the bot, an archived channel. ``""`` means refuse silently
-    (a foreign workspace is told nothing).
+    The code channel's one owner gate (:func:`.agent_picker.authorize`: bound
+    workspace, owner, channel and origin admit the bot, not archived), with this
+    module's audit rows. ``""`` means refuse silently (a foreign workspace).
     """
-    from kiro_crew.slack.code_channels.routing import _origin_of, channel_and_origin_permit
-    from kiro_crew.slack.handler import is_allowed_user
+    from kiro_crew.slack.code_channels import agent_picker
 
-    if not surface.workspace_admitted(team):
-        _audit("denied", f"{resources} team_id={team}", "enterprise_origin_mismatch")
-        return ""
-    if not is_allowed_user(user):
-        _audit("denied", resources, "unauthorized user")
-        return NOT_ALLOWED_TEXT
-    origin = _origin_of(binding.channel_id, binding, None)
-    if not channel_and_origin_permit(live_config(orch), binding.channel_id, origin):
-        _audit(
-            "denied",
-            f"{resources} origin={origin}",
-            "the code channel or its origin does not admit the bot",
-        )
-        return NOT_ALLOWED_TEXT
-    if await surface.is_archived(binding):
-        _audit("denied", resources, "archived")
-        from kiro_crew.slack.code_channels.commands import ARCHIVED_TEXT
-
-        return ARCHIVED_TEXT
-    return None
+    return await agent_picker.authorize(
+        orch, binding, user, team, resources, audit=_audit, not_allowed=NOT_ALLOWED_TEXT
+    )
 
 
 async def _ephemeral(channel: str, user: str, text: str) -> None:
@@ -361,3 +404,59 @@ async def handle_trust_call(orch: Any, payload: dict[str, Any]) -> bool:
         except Exception:
             logger.debug("trusted approval card not updated", exc_info=True)
     return True
+
+
+# ── The kickoff select and /kirocrew trust ───────────────────────────────
+
+
+async def handle_select(orch: Any, payload: dict[str, Any]) -> bool:
+    """A pick in the kickoff's Approval mode select; False when the gate is shut."""
+    if not code_channels_on(live_config(orch)):
+        return False
+    channel, user, msg_ts, team, action = _ids(payload)
+    mode = str(((action.get("selected_option") or {}).get("value")) or "").strip()
+    resources = f"channel={channel} user={user} mode={mode} via=select"
+    binding = await asyncio.to_thread(store().get_binding, channel) if channel else None
+    if binding is None or not msg_ts or msg_ts != binding.anchor_ts:
+        _audit("denied", f"{resources} message={msg_ts}", "not a code channel kickoff")
+        await _ephemeral(channel, user, NOT_ALLOWED_TEXT)
+        return True
+    refusal = await authorize(orch, binding, user, team, resources)
+    if refusal is not None:
+        await _ephemeral(channel, user, refusal)
+        if refusal:
+            await _refresh(binding)  # put the select back on the real mode
+        return True
+    outcome = await set_channel_mode(binding, mode, user, via="select")
+    if outcome.result != "set":
+        await _ephemeral(channel, user, outcome.text)
+        await _refresh(binding)
+    return True
+
+
+async def handle_command(
+    orch: Any,
+    binding: Binding,
+    user: str,
+    arg: str,
+    respond: Callable[[str], Awaitable[None]],
+) -> None:
+    """``/kirocrew trust [<ask|reads|all>]`` in an authorized code channel."""
+    command = _command()
+    word = arg.strip().lower()
+    if not word:
+        slot = bound_slot(surface.dashboard_state(), binding)
+        _audit("allowed", f"channel={binding.channel_id} user={user} via=command result=shown")
+        if slot is None:
+            await respond(NO_SESSION_TEXT)
+            return
+        await respond(CURRENT_TEXT.format(label=label(current_mode(slot)), command=command))
+        return
+    mode = _BY_WORD.get(word)
+    if mode is None:
+        _audit("denied", f"channel={binding.channel_id} user={user} via=command", "unknown mode")
+        from kiro_crew.slack.format import escape_mrkdwn
+
+        await respond(UNKNOWN_TEXT.format(word=escape_mrkdwn(word[:40]), command=command))
+        return
+    await respond((await set_channel_mode(binding, mode, user, via="command")).text)

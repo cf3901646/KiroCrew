@@ -2011,6 +2011,16 @@ the hooks never fire, and `kirocrew-core` lists none of the tools.
   mutation, its sweep approving the waiting call and its `mode_change:trust` row
   naming `slack-code-channels:<user>` -- and posts one warning line in the
   channel. No approval store of its own. SEL: `slack.code_channel.approval_mode`.
+- **Approval mode from the channel.** `agent_picker.kickoff_blocks` draws an
+  **Approval mode** `static_select` (Ask / Trust reads / Trust) below the agent picker,
+  preselected with `approval_picker.current_mode` of the session (the configured
+  starting mode at bind; the kickoff is re-drawn when the session did not take it).
+  A pick (`approval_picker.handle_select`, routed through
+  `worker_approvals.dispatch_card_click`) and `/kirocrew trust [ask|reads|all]` (a
+  `commands.handle_slash` sub-command beside `agent`; bare shows the mode; outside a
+  code channel it is the app's own command) both pass `agent_picker.authorize` and run
+  `approval_picker.set_channel_mode`, i.e. `apply_approval_mode`; the kickoff is
+  re-drawn with who set it and Trust posts the warning line.
 - **Worker approvals.** A prompt raised in a session the channel's CURRENT session
   created (`_created_by`, resolved back through `surface.binding_for_slot`; not
   Slack-linked itself; feature on; channel not archived) is relayed by

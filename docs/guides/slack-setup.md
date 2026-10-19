@@ -443,6 +443,21 @@ To keep one channel on Normal, change the mode on that channel's session. If tha
 is closed, the channel's next message opens a new session, which starts in the configured
 mode again.
 
+**Changing it from the channel.** Only you (the bot's owner) can change a channel's mode
+from Slack, two ways:
+
+- **The picker in the first message.** Below **Agent for this channel**, the kickoff has an
+  **Approval mode** menu (Ask / Trust reads / Trust), set to the mode the channel's session
+  holds now. Pick another and the session switches; the message then shows the new mode
+  and who set it.
+- **`/<command> trust ask|reads|all`.** Sets Ask, Trust reads or Trust. `/<command> trust`
+  with nothing after it shows the channel's current mode. In a code channel this changes
+  only that channel.
+
+Both go through the same audited change as the session's own approval picker on the
+dashboard. Picking Trust posts a warning line in the channel. Anyone else gets a message
+only they can see, and nothing changes.
+
 **Approval prompts in the channel.** When a code channel's session needs an approval, the
 **Tool approval requested** card is posted in the channel itself, where the agent's
 replies go, not in a thread. Besides **Approve** and **Reject** it has **Trust this
