@@ -138,6 +138,8 @@ _INSTALLERS: dict[str, Callable[[], object]] = {
     "kirocrew-security-conductor.json": conductor_agents._install_security_conductor_agent,
     "kirocrew-worker.json": worker_agent._install_worker_agent,
     "kirocrew-research.json": service_agents._install_research_agent,
+    "kirocrew-mate-conductor.json": service_agents._install_mate_conductor_agent,
+    "kirocrew-mate-worker.json": service_agents._install_mate_worker_agent,
     "kirocrew-dashboard-manager.json": service_agents._install_dashboard_manager_agent,
     "kirocrew-lite.json": service_agents._install_lite_agent_fallback,
     "kirocrew-guest.json": service_agents._install_guest_agent,

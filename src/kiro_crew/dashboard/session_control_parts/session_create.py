@@ -1356,12 +1356,64 @@ def _dispatching_crewmate(
         # An id-less member's template worker keeps the member's selection
         # (the record cannot say "this member, under that template"), so the
         # template is the only thing that tells the worker from the crewmate:
-        # a record running under another template is such a worker.
-        if record is None or caller_execution.template_id != member_template_id(record):
+        # a record running under another template is such a worker. Read through
+        # the chat rule, so a record naming the crewmate's own file is the
+        # conductor it chats on.
+        from kiro_crew.mate_worker import member_chat_template
+
+        if record is None or member_chat_template(
+            caller_execution.template_id
+        ) != member_template_id(record):
             return None
         return record
     agent_name = getattr(caller_slot, "agent", "") or ""
     return cfg.agents.get(agent_name) if agent_name else None
+
+
+def _conducts_for_a_worker(caller_slot: Any, caller_execution: ExecutionContext | None) -> bool:
+    """Whether the caller is a crewmate's own chat running on the mate conductor.
+
+    That chat hands its work to the crewmate's worker (``kiro_crew.mate_worker``).
+    Read from the caller's protected execution record through
+    :func:`_dispatching_crewmate`, so a worker the crewmate already opened (a
+    template selection) is not a conductor and its own children keep today's
+    inheritance. Blocking config read; callers run it off the loop. Any failure
+    answers False, which keeps the plain inheritance.
+    """
+    from kiro_crew.mate_worker import MATE_CONDUCTOR_AGENT
+
+    try:
+        cfg = KiroCrewConfig.load()
+        crewmate = _dispatching_crewmate(cfg, caller_slot, caller_execution)
+        return crewmate is not None and member_template_id(crewmate) == MATE_CONDUCTOR_AGENT
+    except Exception:  # noqa: BLE001 - "not a conductor" is the conservative answer
+        return False
+
+
+def _hands_off_to_own_worker(
+    caller_slot: Any, caller_execution: ExecutionContext | None, requested: str, agent_kind: str
+) -> bool:
+    """Whether this ``session_create`` opens the calling crewmate's own worker.
+
+    True for every request from a crewmate's conductor chat except one that
+    selects ANOTHER crewmate by name (a name-first request naming a
+    ``config.agents`` row that is not the caller's own): that keeps its own
+    resolution, so a peer bound elsewhere stays refused. Everything else -- no
+    agent, the worker, the stock worker, the crewmate's own name, any template,
+    a name nothing resolves -- is the crewmate's worker. False for every caller
+    that is not a conductor. Blocking config read; callers run it off the loop.
+    """
+    if not _conducts_for_a_worker(caller_slot, caller_execution):
+        return False
+    if agent_kind == "template" or not requested:
+        return True
+    try:
+        cfg = KiroCrewConfig.load()
+        own = _dispatching_crewmate(cfg, caller_slot, caller_execution)
+    except Exception:  # noqa: BLE001 - unreadable config: keep the named resolution
+        return False
+    named = cfg.agents.get(requested)
+    return named is None or named is own
 
 
 def _caller_member_workspace(

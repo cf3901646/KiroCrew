@@ -6,13 +6,13 @@ Two questions about that one server, answered in one place:
   crewmate's sessions load the server, so the text Crew writes for it (its
   identity, its first welcome, the goal nudges) names the tools only when they
   are there, and points the user at the Goals tab when they are not.
-* :func:`grant_mate_tools_to_new_member` -- at creation only, a crewmate whose
-  template does not carry the server is enrolled through the capability editor
-  (:class:`kiro_crew.agent_capabilities.CapabilityService`), the same preview and
-  save the owner's Capabilities pane runs. The enrollment sets the server, its
-  ``tools`` reference and :data:`kiro_crew.agent._MATE_AUTO_GRANTS` on the
-  member's private copy and leaves every other row inheriting, so the copy keeps
-  following its template. An existing crewmate is never touched.
+* :func:`grant_mate_tools_to_new_member` -- the creation-time outcome for the
+  server. A crewmate on its own file gets ``kirocrew-mate`` from the gateway
+  (its conductor and its worker base both declare it), so the grant writes
+  nothing to that file and answers ``platform_provided``. A platform server is
+  never written into a crewmate's file by creation; an entry that names one
+  with no transport is dropped wherever the file is written or read
+  (:func:`kiro_crew.mate_worker.drop_partial_platform_servers`).
 
 Blocking IO throughout; callers run it off the event loop.
 """
@@ -33,7 +33,7 @@ _MATE_REF = f"@{MATE_SERVER}"
 # A spec file stem: no separator, no leading dot, so it cannot leave its directory.
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 
-# Outcomes of :func:`grant_mate_tools_to_new_member`; only GRANTED wrote anything.
+# Outcomes of :func:`grant_mate_tools_to_new_member`; none of them writes anything.
 GRANTED = "granted"
 TEMPLATE_HAS_IT = "template_has_it"
 TEMPLATE_MUTES_IT = "template_mutes_it"
@@ -218,22 +218,11 @@ def grant_mate_tools_to_new_member(
     *,
     catalog: Callable[[str], dict[str, str]] | None = None,
 ) -> str:
-    """Give the just-created crewmate *member* the mate tools its template lacks.
+    """The mate-tools outcome for the just-created crewmate *member*. Never raises.
 
-    Call it once, right after the create published the member, and only then:
-    an existing crewmate is never enrolled by this. Returns one of the module's
-    outcome codes and never raises, because a create that landed must not be
-    reported as failed over a missing optional tool set. Skipped (nothing
-    written) when:
-
-    * the template already mounts the server, or mutes it (the template's
-      author decided);
-    * the template is the default spec ``kirocrew``, which receives the mate set
-      from Crew itself and keeps a removal the user made there;
-    * POLICY ∩ PROFILE withholds the server, or a fresh build would not emit it;
-    * a backend the member's chats start on cannot load an enrolled member's
-      saved spec (``agent_capabilities.member_backend_warning`` on the previewed
-      copy), since enrolling would then refuse every chat start.
+    ``platform_provided`` for a crewmate on its own file: the gateway supplies
+    the server, so nothing is written. ``mate_file_missing`` when the eager copy
+    did not land, ``default_template`` and ``not_a_member`` as named.
     """
     try:
         return _grant(member, catalog or _default_catalog)

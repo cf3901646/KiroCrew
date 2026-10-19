@@ -303,7 +303,7 @@ def refresh_materialized_agents(*, heal_default: bool = False) -> None:
     rather than papered over with a per-file stat.
     """
     global _MATERIALIZED_AGENTS, _MATERIALIZED_AGENTS_READY, _MATERIALIZED_REFRESH_ISSUED
-    global _MATERIALIZED_REFRESH_APPLIED, _MATERIALIZED_COMPLETE
+    global _MATERIALIZED_REFRESH_APPLIED, _MATERIALIZED_COMPLETE, _MATERIALIZED_MATE_ONLY
     with _MATERIALIZED_AGENTS_LOCK:
         generation_at_start = _MATERIALIZED_AGENTS_GENERATION
         _MATERIALIZED_REFRESH_ISSUED += 1
@@ -312,7 +312,26 @@ def refresh_materialized_agents(*, heal_default: bool = False) -> None:
         agents_dir = kiro_agents_dir()
         _SCAN_STATE.complete = True
         snapshot, stems = _scan_materialized_index(agents_dir)
-        scan_complete = bool(getattr(_SCAN_STATE, "complete", True))
+        # Crewmate scope (``rfc-mate-owned-agent-config`` §5.3). A crewmate owns a
+        # custom-agent file in ``~/.kiro/mates/agents/`` whose ``kiro_agent``
+        # binding names its id; binding resolution reads both folders so that
+        # pointer is a DECLARED agent and the dangling self-heal
+        # (:func:`reset_dangling_default_agent`) does not reset it, and dispatch
+        # (:func:`dispatch_kiro_agent`) finds it. The session agent picker reads
+        # :func:`kiro_agents_dir` only, never this snapshot, so a crewmate stays
+        # out of it. Unioned, so a user-level agent of the same name still wins
+        # the stem map (user-level is authored; a crewmate id collides only by
+        # construction). ``_SCAN_STATE.complete`` is left as the user-level scan
+        # set it: a crewmate-folder read error must not mark a complete user-level
+        # scan incomplete and block the owner's heal.
+        complete_after_user = bool(getattr(_SCAN_STATE, "complete", True))
+        mate_names, mate_stems = _scan_materialized_index(mate_agents_dir())
+        _SCAN_STATE.complete = complete_after_user
+        mate_only = frozenset(mate_names - snapshot)
+        user_names = snapshot
+        snapshot = frozenset(snapshot | mate_names)
+        stems = {**mate_stems, **stems}
+        scan_complete = complete_after_user
     except Exception:  # noqa: BLE001 — a refresh failure only costs a fallback
         logger.debug("Failed to refresh materialized agent names", exc_info=True)
         return
@@ -331,7 +350,12 @@ def refresh_materialized_agents(*, heal_default: bool = False) -> None:
             # app; union instead and let the refresh scheduled by that
             # registration apply the authoritative view (including removals).
             snapshot = frozenset(snapshot | _MATERIALIZED_AGENTS)
+            # The same for a crewmate file published meanwhile
+            # (:func:`publish_mate_agents`), unless this scan saw the user level
+            # declare that name.
+            mate_only = frozenset(mate_only | (_MATERIALIZED_MATE_ONLY - user_names))
         _MATERIALIZED_AGENTS = snapshot
+        _MATERIALIZED_MATE_ONLY = mate_only
         # In place, new entries first: a reader between the two statements sees
         # every current stem (an old value for one just rewritten, never a hole),
         # and the dict's identity holds across refreshes and boots.
@@ -630,6 +654,34 @@ def publish_materialized_agents(names: Iterable[str]) -> None:
         _MATERIALIZED_AGENTS_GENERATION += 1
 
 
+def publish_mate_agents(names: Iterable[str]) -> None:
+    """Record *names* as crewmate-owned files the moment they are written.
+
+    The crewmate writers (``acp.mate_config.write_mate_spec``) call this right
+    after the file lands, so the next chat of that crewmate runs on the
+    conductor (:func:`kiro_crew.mate_worker.member_chat_agent`) instead of
+    waiting for the next full scan. A name the user level already declares is
+    left out of the crewmate-only set, the rule the full scan applies. A pure set
+    union, safe on the event loop.
+    """
+    global _MATERIALIZED_AGENTS, _MATERIALIZED_AGENTS_READY, _MATERIALIZED_AGENTS_GENERATION
+    global _MATERIALIZED_MATE_ONLY
+    fresh = {n for n in names if isinstance(n, str) and n}
+    if not fresh:
+        return
+    with _MATERIALIZED_AGENTS_LOCK:
+        user_level = (
+            _MATERIALIZED_AGENTS - _MATERIALIZED_MATE_ONLY
+            if _MATERIALIZED_AGENTS_READY
+            else frozenset()
+        )
+        _MATERIALIZED_MATE_ONLY = frozenset(_MATERIALIZED_MATE_ONLY | (fresh - user_level))
+        _MATERIALIZED_AGENTS = frozenset(_MATERIALIZED_AGENTS | fresh)
+        _remember_seen(fresh)
+        _MATERIALIZED_AGENTS_READY = True
+        _MATERIALIZED_AGENTS_GENERATION += 1
+
+
 def schedule_materialized_agents_refresh() -> None:
     """Refresh the snapshot from ANY context without blocking an event loop.
 
@@ -707,7 +759,9 @@ def member_template_id(agent_cfg: KiroCrewAgentConfig) -> str:
     before the record exists, by each builder (:func:`resolve_member_execution`
     and the subagent admission gate's resume and inherited-member arms).
     """
-    return dispatch_kiro_agent(agent_cfg.kiro_agent) or "kirocrew"
+    from kiro_crew.mate_worker import member_chat_agent
+
+    return member_chat_agent(agent_cfg.kiro_agent) or "kirocrew"
 
 
 #: Agents kiro-cli ships inside its own binary. No spec file declares them in any

@@ -1,0 +1,492 @@
+"""The crewmate worker: a source-defined base plus the crewmate's own additions.
+
+A crewmate is two source-defined agents and one file it owns
+(``rfc-mate-owned-agent-config`` §5.1, §5.4). Its chat runs on the conductor,
+``kirocrew-mate-conductor``; work the conductor hands off runs in a worker
+session on ``kirocrew-mate-worker``. Both specs are written from Crew's source
+on every gateway start (``agent_materialization.service_agents``) and neither is
+user-editable. The crewmate's file, ``~/.kiro/mates/agents/<id>.json``, extends
+the WORKER only, and only additively:
+
+* ``prompt`` is appended after the worker's own prompt, never in its place;
+* ``mcpServers`` the base does not declare are added (a base server of the same
+  name always wins, so a file cannot redefine a platform server);
+* skills (``resources`` and ``skills`` entries) the base does not carry are added;
+* ``allowedTools`` entries are taken only for the servers the file adds, and the
+  ``tools`` list mounts each added server.
+
+Restrictions narrow, whoever declared them: the file's ``excludedTools`` and
+every ``disabledTools`` entry it names join the worker's ``excludedTools``, and
+so does every tool the user switched off on the dashboard's MCP page for a
+server the worker mounts (:func:`globally_disabled_refs`); an auto-approval
+naming an excluded tool is dropped. Everything else in the file (``tools`` for
+built-ins, ``model``, ``permissions``, ``hooks``) is ignored here. The merged spec then goes through
+the governance sanitizer, and the projection re-applies the ceiling on its own
+read (``kas_agents._ceiling_permitted``), so an addition never lifts the worker
+above POLICY ∩ PROFILE. Crew's PreToolUse gate still evaluates every call.
+
+Pure functions over parsed specs plus one resolver; nothing here holds state, so
+the MCP-statelessness rule has nothing to guard.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from kiro_crew import crewmate_prompts
+from kiro_crew.agent_files import MATE_CONDUCTOR_AGENT_FILENAME, MATE_WORKER_AGENT_FILENAME
+from kiro_crew.user_json import copy_json_document
+
+logger = logging.getLogger(__name__)
+
+#: The agent a crewmate's worker sessions run on.
+MATE_WORKER_AGENT = Path(MATE_WORKER_AGENT_FILENAME).stem
+#: The agent a crewmate's own chat runs on.
+MATE_CONDUCTOR_AGENT = Path(MATE_CONDUCTOR_AGENT_FILENAME).stem
+
+#: The first line a worker's report opens with when the task needs a capability
+#: it does not have; the crewmate's thread is told so on the report
+#: (``mate_thread_wakes.report_prompt``).
+MISSING_CAPABILITY_PREFIX = "MISSING CAPABILITY:"
+
+#: The worker's own principles, appended to its source-defined prompt
+#: (``service_agents._install_mate_worker_agent``). Its crewmate is the one that
+#: can ask the user for a tool, so a gap goes back to it, named.
+MATE_WORKER_PROMPT = crewmate_prompts.fill(
+    "worker.principles", missing_prefix=MISSING_CAPABILITY_PREFIX
+)
+
+#: The sub-agent tools a crewmate's conductor does not mount. Its hand-off is a
+#: worker session (``session_create`` / ``session_send`` /
+#: ``session_read_message``), so ``spawn_run`` and the tools that only act on a
+#: run it started are taken out of the conductor's tool list
+#: (``excludedTools``, which both engines apply), and the spawn gate refuses a
+#: spawn whose parent runs on the conductor
+#: (``subagent_parts.agent_policy.conductor_spawn_refusal``).
+MATE_CONDUCTOR_EXCLUDED_TOOLS = tuple(
+    f"@kirocrew-core/{tool}"
+    for tool in (
+        "spawn_run",
+        "spawn_sub_agents",
+        "spawn_continue",
+        "spawn_steer",
+        "spawn_status",
+        "spawn_release",
+        "spawn_list",
+        # These start work of their own; on the conductor that work goes to
+        # the worker instead.
+        "task_run",
+        "workflow_run",
+    )
+)
+
+
+def is_conductor_execution(execution: Any) -> bool:
+    """Whether *execution* (an attested ``ExecutionContext``) is a crewmate's conductor chat.
+
+    Positive identity: a ``member`` selection running the conductor template. A
+    worker the crewmate opened is a ``template`` selection on the worker, so it
+    answers False, as does a missing record.
+    """
+    return (
+        execution is not None
+        and getattr(execution, "selection_kind", "") == "member"
+        and member_chat_template(getattr(execution, "template_id", "")) == MATE_CONDUCTOR_AGENT
+    )
+
+
+def member_chat_template(template_id: str) -> str:
+    """The agent a ``member`` record's *template_id* chats on.
+
+    The rule ``resolve_session_agent_bindings`` applies to every member turn: a
+    record naming the crewmate's own file chats on the conductor. A record
+    written while the dispatch snapshot did not know that file yet names the
+    file itself; read through here it is still the conductor, so the chat, the
+    hand-off and the spawn gate agree. Any other template is returned as named.
+    """
+    if not template_id or template_id == MATE_CONDUCTOR_AGENT:
+        return template_id
+    return MATE_CONDUCTOR_AGENT if is_mate_owned_agent(template_id) else template_id
+
+
+def is_legacy_binding(name: str, binding: Any) -> bool:
+    """Whether ``config.agents[name]`` is a legacy built-in binding, not a crewmate.
+
+    Positive signature: a ``builtin`` binding that never got a member identity
+    (an older install's ``assistant``). The roster surfaces do not list it as a
+    crewmate. The reserved ``default`` member is excluded by name, and a
+    user-created crewmate on shared memory (``source`` ``kirocrew``, no id yet)
+    stays listed.
+    """
+    if name == "default" or getattr(binding, "source", "") != "builtin":
+        return False
+    return not str(getattr(binding, "member_id", "") or "").strip()
+
+
+def conductor_mcp_servers() -> frozenset[str]:
+    """The MCP servers a crewmate's conductor may mount: the gateway's own.
+
+    The conductor's tool set is fixed by the gateway, whatever servers the user
+    has: these are the platform servers Crew itself launches
+    (``agent._MANAGED_MCP_SERVERS``). Every other server, the user's included,
+    reaches the crewmate's worker only, through its own file.
+    """
+    from kiro_crew import agent as agent_mod
+
+    return frozenset(agent_mod._MANAGED_MCP_SERVERS)
+
+
+#: The built-in tools a crewmate's conductor does not mount: the shell, the
+#: general file writer, and ``code`` (governance files it under
+#: ``filesystem.write`` because it writes files and can shell out). The
+#: conductor answers, reads, plans and reviews; anything that changes a file or
+#: runs a command is a worker's. Its own writes go through MCP tools (the
+#: ledger, the dashboard page, ``save_notes``, the goal tools). Taken out of
+#: ``tools`` and ``allowedTools`` and named in ``excludedTools``, which both
+#: engines subtract (KAS expands ``fs_write`` to its whole edit family).
+MATE_CONDUCTOR_WITHHELD_BUILTINS = ("execute_bash", "fs_write", "code")
+
+#: The conductor-only ``kirocrew-mate`` tools the worker does not mount: the
+#: worker does the work, and a capability it lacks is reported back to the
+#: conductor, which alone reads the catalog and asks the user for an addition.
+MATE_WORKER_EXCLUDED_TOOLS = (
+    "@kirocrew-mate/request_capabilities",
+    "@kirocrew-mate/find_capabilities",
+)
+
+#: The parts of a crewmate's file that extend the worker. A template copied in as
+#: the worker's extra kit (``mate_worker_kit``) copies exactly these.
+ADDITION_KEYS = ("prompt", "mcpServers", "resources", "skills", "allowedTools")
+
+
+def is_mate_owned_agent(kiro_agent: str) -> bool:
+    """Whether *kiro_agent* names a crewmate-owned file and nothing at the user level.
+
+    A lookup on the snapshot :func:`kiro_crew.config.loader.refresh_materialized_agents`
+    publishes; the crewmate writers add their file to it as they write it
+    (``acp.mate_config.write_mate_spec``). A name the snapshot does not know at
+    all is rescanned first when called off the loop; on the loop a rescan is
+    scheduled and the answer is False for that call, so the binding runs as named.
+    """
+    import asyncio
+
+    from kiro_crew.config import loader
+
+    if not kiro_agent:
+        return False
+    if loader._MATERIALIZED_AGENTS_READY and kiro_agent in loader._MATERIALIZED_MATE_ONLY:
+        return True
+    known = loader._MATERIALIZED_AGENTS_READY and kiro_agent in loader._MATERIALIZED_AGENTS
+    if not known:
+        # Not in the snapshot at all: a file another process wrote (the command
+        # line's create) or one written before any scan. Off the loop it is
+        # rescanned here; on the loop a rescan is scheduled and this one call
+        # answers from the snapshot as it is.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            loader.refresh_materialized_agents(heal_default=False)
+        else:
+            loader.schedule_materialized_agents_refresh()
+            return False
+    return kiro_agent in loader._MATERIALIZED_MATE_ONLY
+
+
+def member_chat_agent(kiro_agent: str) -> str:
+    """The agent a crewmate's own chat runs on, for its bound ``kiro_agent``.
+
+    The conductor when the binding owns a crewmate file
+    (:func:`is_mate_owned_agent`), else the bound name through
+    ``dispatch_kiro_agent``. The crewmate file never reaches the chat.
+    """
+    from kiro_crew.config.loader import dispatch_kiro_agent
+
+    if is_mate_owned_agent(kiro_agent):
+        return MATE_CONDUCTOR_AGENT
+    return dispatch_kiro_agent(kiro_agent)
+
+
+#: Keys a platform-server entry may carry and still say nothing of its own: an
+#: on/off switch with no transport.
+_BARE_OVERRIDE_KEYS = frozenset({"disabled"})
+
+
+def drop_partial_platform_servers(spec: Any) -> list[str]:
+    """Remove from *spec* each platform-server entry that is only an on/off switch.
+
+    Platform servers (:func:`conductor_mcp_servers`) come from the gateway, whatever
+    a template carries. An entry such as ``"kirocrew-mate": {"disabled": false}``
+    names one with no ``command`` or ``url``; a session that ran the file would wait
+    for a server it cannot launch. An entry that carries anything else (a
+    transport, ``disabledTools``) is left as it is. Edits *spec* in place and
+    returns the names it removed.
+    """
+    servers = spec.get("mcpServers") if isinstance(spec, dict) else None
+    if not isinstance(servers, dict):
+        return []
+    platform = conductor_mcp_servers()
+    dropped = [
+        name
+        for name, entry in servers.items()
+        if name in platform and isinstance(entry, dict) and set(entry) <= _BARE_OVERRIDE_KEYS
+    ]
+    for name in dropped:
+        del servers[name]
+    return dropped
+
+
+def _server_of(ref: str) -> str:
+    """The server a ``@server`` / ``@server/tool`` reference names, else ``""``."""
+    if not ref.startswith("@"):
+        return ""
+    return ref[1:].split("/", 1)[0]
+
+
+def _strings(value: Any) -> list[str]:
+    return [v for v in value if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def _servers(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    return {k: v for k, v in value.items() if isinstance(k, str) and isinstance(v, dict)}
+
+
+def disabled_tool_refs(servers: Any) -> list[str]:
+    """``@server/tool`` for every tool an ``mcpServers`` entry's ``disabledTools`` turns off.
+
+    The KAS customAgents wire drops ``disabledTools`` from a server entry
+    (``kas_agents._KAS_DISCARDED_ENTRY_KEYS``), so the restriction is re-expressed
+    in a field the wire carries and the engine applies: ``excludedTools``, which
+    takes the tool out of the session's tool list. Only string tool names count.
+    """
+    refs: list[str] = []
+    for name, entry in _servers(servers).items():
+        for tool in _strings(entry.get("disabledTools")):
+            ref = f"@{name}/{tool}"
+            if tool.strip() and ref not in refs:
+                refs.append(ref)
+    return refs
+
+
+def worker_additions(base: dict[str, Any], mate_spec: dict[str, Any]) -> dict[str, Any]:
+    """What *mate_spec* adds on top of the worker *base*.
+
+    Anything the base already carries is not an addition, so a file holding a
+    full copy of a template that matches the base (the default template) adds
+    nothing. The prompt's addition is what it carries beyond the base's own
+    prompt text: a prompt that opens with the base's text adds only the rest.
+    """
+    base_servers = _servers(base.get("mcpServers"))
+    added_servers = {
+        name: copy_json_document(entry)
+        for name, entry in _servers(mate_spec.get("mcpServers")).items()
+        if name not in base_servers
+    }
+    base_prompt = base.get("prompt") if isinstance(base.get("prompt"), str) else ""
+    raw_prompt = mate_spec.get("prompt")
+    prompt = raw_prompt.strip() if isinstance(raw_prompt, str) else ""
+    own = (base_prompt or "").strip()
+    if own and prompt.startswith(own):
+        # A template built on the default one opens with the base's own text;
+        # only what follows it is an addition, or the worker would read it twice.
+        prompt = prompt[len(own) :].strip()
+    additions: dict[str, Any] = {"prompt": prompt, "mcpServers": added_servers}
+    for key in ("resources", "skills"):
+        have = set(_strings(base.get(key)))
+        additions[key] = [s for s in dict.fromkeys(_strings(mate_spec.get(key))) if s not in have]
+    additions["allowedTools"] = [
+        ref
+        for ref in dict.fromkeys(_strings(mate_spec.get("allowedTools")))
+        if _server_of(ref) in added_servers
+    ]
+    # A restriction, not an addition: the file's per-tool limits count for EVERY
+    # server it names, a base server included, because the server entry the base
+    # wins with must not carry the file's narrowing away.
+    additions["disabledTools"] = disabled_tool_refs(mate_spec.get("mcpServers"))
+    # The file's own ``excludedTools`` is a restriction too, kept whole: a tool it
+    # takes out stays out of the worker, whoever declared it.
+    additions["excludedTools"] = list(dict.fromkeys(_strings(mate_spec.get("excludedTools"))))
+    return additions
+
+
+def has_additions(additions: dict[str, Any]) -> bool:
+    """Whether *additions* would change the worker at all."""
+    return any(additions.get(key) for key in ADDITION_KEYS)
+
+
+def merge_worker_spec(base: dict[str, Any], additions: dict[str, Any]) -> dict[str, Any]:
+    """The worker spec: *base* with *additions* layered on, then governed.
+
+    *base* must carry its prompt as literal text (the caller resolves a
+    ``file://`` prompt first); the result's prompt is literal too. The base is
+    never mutated.
+    """
+    spec = copy_json_document(base)
+    spec["name"] = MATE_WORKER_AGENT
+    extra = additions.get("prompt") or ""
+    if extra:
+        own = spec.get("prompt") if isinstance(spec.get("prompt"), str) else ""
+        spec["prompt"] = f"{own.rstrip()}\n\n{extra}" if own else extra
+    servers = _servers(spec.get("mcpServers"))
+    added = _servers(additions.get("mcpServers"))
+    for name, entry in added.items():
+        servers.setdefault(name, copy_json_document(entry))
+    spec["mcpServers"] = servers
+    for key in ("resources", "skills"):
+        extra_items = _strings(additions.get(key))
+        if extra_items:
+            spec[key] = list(dict.fromkeys([*_strings(spec.get(key)), *extra_items]))
+    tools = _strings(spec.get("tools"))
+    for name in added:
+        if f"@{name}" not in tools and "*" not in tools:
+            tools.append(f"@{name}")
+    spec["tools"] = tools
+    allowed = _strings(spec.get("allowedTools"))
+    for ref in _strings(additions.get("allowedTools")):
+        if _server_of(ref) in added and ref not in allowed:
+            allowed.append(ref)
+    # Per-tool limits, from the base's own entries and the file's, are hidden from
+    # the session rather than refused at its start: each disabled tool joins
+    # ``excludedTools`` and loses any auto-approval naming it.
+    off = list(
+        dict.fromkeys([*disabled_tool_refs(servers), *_strings(additions.get("disabledTools"))])
+    )
+    excluded = list(
+        dict.fromkeys(
+            [*_strings(spec.get("excludedTools")), *_strings(additions.get("excludedTools")), *off]
+        )
+    )
+    if excluded:
+        spec["excludedTools"] = excluded
+        allowed = [ref for ref in allowed if ref not in excluded]
+        for ref in excluded:
+            if not ref.startswith("@") or "/" not in ref:
+                continue
+            server, _, tool = ref[1:].partition("/")
+            entry = servers.get(server)
+            approve = entry.get("autoApprove") if isinstance(entry, dict) else None
+            if isinstance(approve, list) and tool in approve:
+                entry["autoApprove"] = [t for t in approve if t != tool]
+    spec["allowedTools"] = allowed
+    # The ceiling applies to the MERGED spec, not to the file alone: a grant the
+    # file carries for a server it adds is withheld here exactly as it would be
+    # on any other spec Crew writes.
+    from kiro_crew.platform.governance import sanitize_agent_config_governance
+
+    sanitize_agent_config_governance(spec)
+    return spec
+
+
+def mate_file_for_member(member_id: str, config: Any = None) -> str:
+    """The name of the crewmate file *member_id*'s binding owns, else ``""``.
+
+    The binding's ``kiro_agent`` names the file; it counts only when the name is
+    declared in the crewmate folder and NOT at the user level (a user-level spec
+    of the same name is someone's custom agent, never this crewmate's additions).
+    Blocking file I/O; callers run it off the event loop.
+    """
+    from kiro_crew.acp import kas_agents as kas_agents_mod
+    from kiro_crew.config import paths as paths_mod
+    from kiro_crew.execution_context import member_config_for_id
+
+    if config is None:
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        config = KiroCrewConfig.load()
+    try:
+        _, binding = member_config_for_id(config, member_id)
+    except Exception:  # noqa: BLE001 - an unknown or ambiguous id owns no file
+        return ""
+    name = getattr(binding, "kiro_agent", "") or ""
+    if not name:
+        return ""
+    if not kas_agents_mod.agent_spec_absent(paths_mod.kiro_agents_dir(), name):
+        return ""
+    if kas_agents_mod.agent_spec_absent(paths_mod.mate_agents_dir(), name):
+        return ""
+    return name
+
+
+def globally_disabled_refs(server_names: Any) -> list[str]:
+    """``@server/tool`` for each tool the user switched off on the dashboard's MCP page.
+
+    The page's per-tool switch writes ``disabledTools`` into the user's MCP config
+    (``api_mcp_toggle_tool``); kiro-cli reads that file, but the KAS wire carries
+    only what the agent spec declares, so for the worker the switch is applied
+    here, to every server in *server_names* the worker mounts. Read through
+    :func:`kiro_crew.mcp_discovery.list_servers`, the same merge (first scope
+    wins) the MCP page shows. An unreadable config adds nothing. Blocking.
+    """
+    names = set(server_names or ())
+    if not names:
+        return []
+    try:
+        from kiro_crew.mcp_discovery import list_servers
+
+        rows = list_servers()
+    except Exception:  # noqa: BLE001 - no readable config means no switch to honour
+        logger.warning("MCP config unreadable; the worker keeps its own tool limits", exc_info=True)
+        return []
+    refs: list[str] = []
+    for row in rows:
+        if getattr(row, "name", None) not in names:
+            continue
+        for tool in getattr(row, "disabled_tools", None) or []:
+            if isinstance(tool, str) and tool.strip():
+                refs.append(f"@{row.name}/{tool}")
+    return list(dict.fromkeys(refs))
+
+
+def _with_global_tool_offs(base: dict[str, Any], additions: dict[str, Any]) -> dict[str, Any]:
+    """*additions* with the dashboard's per-tool switches for every mounted server."""
+    names = [*_servers(base.get("mcpServers")), *_servers(additions.get("mcpServers"))]
+    refs = globally_disabled_refs(names)
+    if not refs:
+        return additions
+    out = dict(additions)
+    out["disabledTools"] = list(dict.fromkeys([*_strings(additions.get("disabledTools")), *refs]))
+    return out
+
+
+def resolve_worker_spec(base: dict[str, Any], member_id: str | None) -> dict[str, Any]:
+    """The worker spec a session of *member_id*'s worker runs on.
+
+    *base* is the source-defined worker spec with its prompt already literal.
+    With no member, or a member whose binding owns no crewmate file, the result
+    is the base under governance; an unreadable file is logged and skipped, so a
+    broken addition degrades to the base rather than to a refused session.
+    """
+    if not member_id:
+        return merge_worker_spec(base, _with_global_tool_offs(base, {}))
+    name = mate_file_for_member(member_id)
+    if not name:
+        return merge_worker_spec(base, _with_global_tool_offs(base, {}))
+    from kiro_crew.acp import kas_agents as kas_agents_mod
+    from kiro_crew.config import paths as paths_mod
+
+    mate_dir = paths_mod.mate_agents_dir()
+    try:
+        mate_spec = kas_agents_mod.load_agent_spec(mate_dir, name)
+        prompt = mate_spec.get("prompt")
+        # Resolved only when the file names a prompt: ``resolve_prompt`` answers
+        # a prompt-less spec with the KAS fallback text, which is not an addition.
+        if isinstance(prompt, str) and prompt.strip():
+            mate_spec["prompt"] = kas_agents_mod.resolve_prompt(
+                mate_spec, agent_id=name, agents_dir=mate_dir
+            )
+        else:
+            mate_spec["prompt"] = ""
+    except kas_agents_mod.KasAgentTranslationError:
+        logger.warning(
+            "crewmate %r: its worker additions file %r is unreadable; the worker runs "
+            "its source base only",
+            member_id,
+            name,
+            exc_info=True,
+        )
+        return merge_worker_spec(base, _with_global_tool_offs(base, {}))
+    additions = worker_additions(base, mate_spec)
+    return merge_worker_spec(base, _with_global_tool_offs(base, additions))

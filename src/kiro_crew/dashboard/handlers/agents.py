@@ -1580,9 +1580,13 @@ async def api_kirocrew_agents(request: web.Request) -> web.Response:
     from kiro_crew.dashboard.handlers.source_providers import is_owner_dashboard_request
 
     redact = request.app.get("state") is None or not is_owner_dashboard_request(request)
+    # A legacy binding with no member id is not a crewmate, so no roster lists it.
+    from kiro_crew.mate_worker import is_legacy_binding
+
     agents = [
         _agent_roster_row(name, "global", agent_cfg, redact=redact)
         for name, agent_cfg in cfg.agents.items()
+        if not is_legacy_binding(name, agent_cfg)
     ]
 
     state: DashboardState | None = request.app.get("state")

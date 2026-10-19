@@ -1373,21 +1373,22 @@ with `set_check_ins` after the goal is saved. The member identity sentence
 long-term aim the user describes is proposed as a goal, not only remembered.
 
 **Every new crewmate gets its own-record tools.** A crewmate's template need not
-carry `kirocrew-mate`: only the default `kirocrew` spec is built with it, and an
-owner may bind a crewmate to any template. So each create path -- the dashboard
+carry `kirocrew-mate`, and it does not have to: a crewmate on its own file chats
+on the conductor and works through its worker, and the gateway builds both with
+`kirocrew-mate` whatever the template carried. So creation never writes a
+platform server into the crewmate's file. Each create path -- the dashboard
 create (`dashboard/agent_admin/crew_records.py`), the first-crewmate step
 (`agent_materialization/first_crewmate.py`) and `kirocrew agent create` -- calls
-`member_mate_tools.grant_mate_tools_to_new_member` once, right after the member is
-published. It enrolls the member through `CapabilityService` (the same preview and
-save the Capabilities pane runs) with three kinds of row: the `kirocrew-mate`
-server, the `@kirocrew-mate` tools reference and each `agent._MATE_AUTO_GRANTS`
-approval; every other row keeps inheriting its template. It writes nothing when
-the template already mounts or mutes the server, when the template is `kirocrew`
-itself, when POLICY ∩ PROFILE withholds the server (asked fail-closed), when a
-fresh build would not emit it, or when the previewed copy carries a
-`backend_warning` (a backend the member's chats start on cannot load an enrolled
-member's spec). An existing crewmate is never enrolled by this, and a create that
-landed is never reported failed over it. The capability editor accepts that
+`member_mate_tools.grant_mate_tools_to_new_member` once, which writes nothing and
+answers `platform_provided` for a crewmate on its own file (`mate_file_missing`
+when the eager copy did not land). An entry that names a platform server with no
+transport (`"kirocrew-mate": {"disabled": false}`, which an older create wrote
+from such a template) is dropped wherever the file is written
+(`mate_config.write_mate_spec`) or projected (`acp.harness.kas.resolve_projected_spec`),
+and the startup migration rewrites any file that still holds one
+(`mate_config_migration.repair_partial_platform_servers`); an entry carrying a
+transport or `disabledTools` stays (`mate_worker.drop_partial_platform_servers`,
+pinned by `test/test_mate_platform_server_override.py`). The capability editor accepts that
 server on a member whose Parent lacks it (`agent_capabilities.MEMBER_PLATFORM_SERVERS`):
 its transport is never the request's but the default template's entry
 (`managed_mcp.managed_member_transport`), and every later save refreshes it, or
@@ -2191,11 +2192,12 @@ draft guard, so a veto neither remounts the card nor loses its pushed form.
   crewmate one hidden turn once its thread is idle (waiting at most ten
   minutes; a newer save, of that goal or another, replaces a waiting nudge).
   It names the goal that changed by number and id, lists every goal, and asks
-  the crewmate to say back that goal in a sentence, research it in ONE
-  background `spawn_run` sub-agent and end the turn so the chat stays free,
-  then propose milestones with `set_key_results` (each linked with `goal_ids`)
-  when the result comes back, keeping the set small and suggesting merges as it
-  grows. A goal removed before the turn would run sends nothing; removing a
+  the crewmate to say back that goal in a sentence, hand the research to ONE
+  worker session (`session_create`, a self-contained brief with `session_send`)
+  and end the turn so the chat stays free -- nothing waits or polls -- then
+  propose milestones with `set_key_results` (each linked with `goal_ids`) when
+  the worker's `[Worker report]` turn arrives ("A worker reports back on its
+  own", below), keeping the set small and suggesting merges as it grows. A goal removed before the turn would run sends nothing; removing a
   goal on the Goals tab instead replaces that waiting nudge with a
   `[Goal removed]` turn (`schedule_removed_nudge`, same wait): it quotes the
   removed goal, lists what is left (or says no goal is left and every check-in
@@ -2805,22 +2807,12 @@ user must see or act on stay: `user`, `error`, `file`, `mcp_oauth`,
 `permission` (pending native and background-spawn approvals remain actionable),
 question cards, change cards, the stop card (a `system` row of kind
 `stop_event`, the record of the person's own Stop press, which breaks a run like
-an error row), and the live `streaming` row. One `tool` row is drawn too: the
-`spawn_run` launch (`isSpawnRunTool`: a tool row whose persisted output carries
-the "Spawned N subagent(s)." header), rendered as the same live
-`SubagentRunCard` the chat page draws through `transcriptRenderers`'
-`subagent_run_tool` entry, reading the member slot's sub-agent state
-(`selectSlotSubagents`) so its counts and per-worker state update in place as
-workers run and return. Delegated work outlives the crewmate's own turn: it
-says "on it", ends its turn, and the workers run for minutes with no typing
-bubble or caption under the last bubble (`CrewmateLiveActivity` mounts only
-while the crewmate's own turn is live), so without the card the chat is
-perfectly still and reads as frozen. The card is a row the person sees, so it
-is a run boundary like an error row (`isRunTransparent` returns false for it):
-the reply after it opens a new run. Every other tool row — the launch's own ✅
-sibling, `nothing_to_do`, a bare `spawn_run` call with no launch output — stays
-hidden, and the `[Subagent completion event]` envelope stays hidden too (the
-card's counters already show the return). Runtime `notice` rows and
+an error row), and the live `streaming` row. No `tool` row is drawn, a
+`spawn_run` launch included: a crewmate's chat runs on its conductor, which
+hands work to worker sessions and starts no sub-agents ("Conductor and
+worker" below), so delegated work shows as those sessions in the sidebar
+(`docs/decisions/2026-10-17-crewmate-chat-hands-off-to-worker-sessions.md`).
+Runtime `notice` rows and
 compaction status cards are hidden rather than removed from history. When the
 filter leaves NOTHING to draw although the transcript is not empty (a patroller
 that has never spoken), the pane's empty hint is the crewmate's — "<name> hasn't
@@ -3188,6 +3180,23 @@ could not be read, so the server took the request) all show "N comments sent".
 
 ## Conductor and worker
 
+A crewmate whose binding owns its own file (`kiro_agent` names a spec found in
+`~/.kiro/mates/agents/` and NOT in `~/.kiro/agents/`;
+`mate_worker.is_mate_owned_agent`, an in-memory set
+`refresh_materialized_agents` publishes beside the agent snapshot) is two
+source-defined agents plus that file. Every creation path writes the file
+through one writer, `acp.mate_config.write_mate_spec`, which adds it to that
+set in the same call (`loader.publish_mate_agents`): the create route and the
+`agent create` command share the copy-and-repoint `mate_config.adopt_own_file`,
+and the startup migration (which also gives the first crewmate its file) writes
+through it too. So a crewmate's first chat, the goal-setup turn included, is
+already on the conductor. A name the set does not know at all (a file another
+process wrote) is rescanned before the answer off the loop, and on the loop a
+rescan is scheduled. A `member` record whose `template_id` names the crewmate's
+own file is read as the conductor (`mate_worker.member_chat_template`) by the
+chat, the hand-off (`_dispatching_crewmate`) and `is_conductor_execution` alike
+(`test/test_mate_conductor_every_create_path.py`). The three parts:
+
 - **The conductor**, `kirocrew-mate-conductor`, is what its own chat runs on.
   `mate_worker.member_chat_agent` maps the binding to it, and it is the one rule
   `member_template_id` and both member arms of `resolve_agent_bindings` read, so
@@ -3274,6 +3283,41 @@ could not be read, so the server took the request) all show "N comments sent".
   additions. No record, no member on it, a binding that owns no file, or an
   unreadable file projects the worker base. On a host that takes its agent at
   spawn time the worker runs its base.
+
+**A worker reports back on its own** (`dashboard/mate_thread_wakes.py`), so the
+conductor dispatches and ends its turn and is free for the user at any moment.
+Every top-level turn end (`chat_runner._end_turn_tail`, depth 0) calls
+`note_turn_end`. When the slot's `_created_by` names a live crewmate thread (a
+member DM slot whose agent is not `default`, not remote) and this process
+witnessed the link -- the child was minted here (`_lineage_minted`) or its
+creator sent it a message here (`_reports_to_creator`, stamped by
+`session_send`'s `send_to_target` when the caller is the target's creator) --
+the worker's latest reply is recorded for that thread and the thread is woken
+with ONE hidden turn (`mate_welcome.dispatch_hidden_turn`, `human_seen=False`)
+built by `report_prompt`: the `[Worker report]` envelope, the worker's title
+and key, its reply scrubbed (`member_goals.scrub_text`), capped at 4,000
+characters and fenced between `<<<worker reply` / `>>>end of worker reply`
+markers (the end marker is removed from the reply so it cannot close the fence
+early), framed as the worker's data, and principles for picking up: the next
+step goes to the worker with `session_send` and the turn ends; a finished
+result or a decision only the user can make is told in the thread; the full
+transcript is one `session_read_message` away; otherwise `nothing_to_do`. A
+`_created_by` read back from transcript metadata alone wakes nothing, and a
+turn that ended before reaching the model reports nothing. A thread with a turn
+running or a message queued keeps the report pending (state-scoped
+`_mate_wakes`, one entry per worker, a later turn end of the same worker
+replacing it and counting the turns); its flush (`_mate_wake_tasks`, one per
+thread) waits on the thread's own turn task and delivers once the thread is
+idle, every turn end of the thread schedules it again, and a delivered report is
+removed before dispatch, so nothing is lost or sent twice. Pending reports live
+in memory only; the upgrade's restart drops them with the turns that made them.
+While the app is stopping (`mate_welcome.app_is_stopping`: a signal shutdown,
+or the final drain an in-app restart starts) no hidden turn starts:
+`dispatch_hidden_turn` returns False and the flush leaves its reports pending.
+A restart cancels every running worker, and its turn end would otherwise wake
+the crewmate into a turn the same restart cuts, whose in-flight marker then
+put "interrupted when the app restarted" on a thread whose own turn had
+finished. A check-in that meets it logs `skipped: the app is stopping`.
 
 **The worker's extra kit** (`kiro_crew.mate_worker_kit`, owner-only routes
 `GET /api/agents/{name}/worker-kit`, `POST .../worker-kit/preview`,

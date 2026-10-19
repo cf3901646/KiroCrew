@@ -15,6 +15,10 @@ tiers that follow who owns the field:
   and a report its own account. Admitted on any turn in the crewmate's own
   dashboard thread, including the Daily Goal Reminder's hidden turn
   (:mod:`kiro_crew.dashboard.handlers.member_goals`).
+* **Notes** -- ``save_notes`` replaces the crewmate's own briefing, the
+  ``[CURRENT ASSIGNMENT]`` section it keeps for itself
+  (:mod:`kiro_crew.member_notes`). Its chat runs on the conductor, which has no
+  file tool, so this is how it keeps them. Admitted like the goal tools.
 * **Card-backed** -- ``set_model``, ``set_approval_mode``,
   ``request_capabilities``, ``set_goal`` (add or change one goal), ``set_key_results``
   (how the goals are measured, the whole set at once): what the crewmate
@@ -509,6 +513,18 @@ def _call_tool_inner(name: str, args: dict[str, Any]) -> str:
         "save_goal_report",
     ):
         return _goal_call(name, args, sk)
+
+    if name == "save_notes":
+        d = _post("/api/member/self/notes", {"text": args.get("text", "")}, session_key=sk)
+        refused = _error_for(name, d)
+        if refused:
+            return f"{refused}\nYour notes were not saved; do not say they were."
+        return _render({**d, "next": "Saved; they open your next turn."})
+
+    if name == "find_capabilities":
+        d = _post("/api/member/self/capabilities", {"query": args.get("query", "")}, session_key=sk)
+        refused = _error_for(name, d)
+        return refused or _render(d)
 
     if name == "update_self":
         fields = {k: args[k] for k in ("display_name", "description", "avatar") if k in args}

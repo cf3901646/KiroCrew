@@ -278,6 +278,13 @@ wider blast radius — it names a conversation on a network surface — and its 
 re-runs the outbound recipient check with the principal the channel authorized on
 inbound before anything is sent (see [messaging](messaging.md#a-busy-resumed-dashboard-session-takes-the-slots-own-machinery-discord)).
 
+A send whose caller is the target's own creator (`_created_by` equals the
+caller's slot key) also sets the target's in-memory `_reports_to_creator`. With
+`_lineage_minted` it is the live witness the crewmate worker report reads
+([crew-mode](crew-mode.md), "A worker reports back on its own"): a child
+restored after a restart reports to its crewmate again once that crewmate sends
+it something. It is never persisted and grants no access.
+
 **`steer: true` asks for a third outcome on a busy target.** Instead of waiting
 for the running turn, the message cuts into it (`steer_into_running_turn`, the
 same path the dashboard composer's mid-turn steer uses), so a caller watching a
@@ -716,7 +723,16 @@ Creation copies two different kinds of state, and the split is deliberate.
 **Identity** — the child is created in the caller's workspace (the memory
 boundary; a child left in `default` would be both a boundary crossing and
 unaddressable by its own creator), inherits the caller's agent when none is
-named, takes that workspace's project directory as its cwd, and is attributed to
+named -- except a crewmate's own chat running on the mate conductor, whose
+child is always its WORKER whatever `agent` it passes, opened as the template
+`kirocrew-mate-worker` on the crewmate's own workspace, store and member
+identity (`_hands_off_to_own_worker` over `_conducts_for_a_worker`, read from
+the caller's execution record through `_dispatching_crewmate`; the one
+exception is a name-first `agent` naming another `config.agents` row, which
+keeps its own resolution and so stays refused as a cross-workspace peer; a
+worker it already opened is a template
+selection, so the worker's own unnamed children inherit the worker; see
+crew-mode.md, "Conductor and worker") -- takes that workspace's project directory as its cwd, and is attributed to
 the caller via `created_by` so the per-creator slot ceiling is countable. The
 caller's ACP session id is also frozen onto the child at this mint
 (`_created_by_sid`), from the live caller handle, so the child's `session/opened`

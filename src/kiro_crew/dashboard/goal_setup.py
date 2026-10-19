@@ -4,8 +4,10 @@ Saving a goal on the Goals tab, new or edited (or applying a ``crewmate.goal`` c
 writes through the same route) should not leave the user to work out what
 milestones are or where the check-ins live. So the gateway sends the crewmate
 one hidden turn in its own thread (:func:`mate_welcome.dispatch_hidden_turn`):
-acknowledge the goal in a sentence, research it in a background sub-agent so
-the chat stays free, and propose milestones when the research comes back.
+acknowledge the goal in a sentence, hand the research to a worker session
+(``session_create`` / ``session_send``; a crewmate's chat starts no
+sub-agents) and end the turn, then propose milestones when the worker's
+report wakes it (:mod:`kiro_crew.dashboard.mate_thread_wakes`).
 Applying that milestones card always sends a second hidden turn
 (:func:`schedule_milestones_nudge`), which offers the check-ins when none is on. Each of those is a card the user
 decides; the crewmate's own goal cards are admitted outside a turn the user sent

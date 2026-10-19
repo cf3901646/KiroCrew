@@ -18,8 +18,12 @@ from kiro_crew.agent_files import ASSISTANT_MEMBER_NAME
 #: One-time marker for :func:`create_first_crewmate_once`, under the data home.
 FIRST_CREWMATE_MARKER = "mate_member_created.json"
 
-#: The template a crewmate gets when the config names no default one.
-_ORDINARY_TEMPLATE = "kirocrew"
+#: The template a crewmate gets when the config names no default one. Kept in
+#: sync with ``change_card_catalog.DEFAULT_CREWMATE_TEMPLATE`` by hand rather
+#: than imported from it: that module is dashboard-facing (change cards) and
+#: importing it here would pull dashboard code into boot-time crewmate
+#: creation. See rfc-mate-owned-agent-config.md, migration step 1.
+_ORDINARY_TEMPLATE = "kirocrew-mate-conductor"
 
 
 def _default_template(*sections: object) -> str:
