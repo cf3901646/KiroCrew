@@ -33,7 +33,9 @@ from typing import Any, Final, cast
 
 from aiohttp import web
 
-from kiro_crew import agent_panel, dashboard_agentic, dashboard_package, dashboard_types
+from kiro_crew import agent_panel
+from kiro_crew import crewmate_prompts as _crewmate_prompts
+from kiro_crew import dashboard_agentic, dashboard_package, dashboard_types
 from kiro_crew import members as members_mod
 from kiro_crew import pipeline_board_contract
 from kiro_crew.artifact_store import dashboard_package as _dashboard
@@ -2269,6 +2271,8 @@ async def api_dashboard_save(request: web.Request) -> web.Response:
 
     # After saving, so a page that throws is still saved and one more save fixes it.
     verification = await _page_check(slug, crew_name, slot, saved_package)
+    sources = field_sources(saved_package)
+    manual = [row["field"] for row in sources if row["source"] == "manual"]
 
     # NO BROADCAST: the page in force has not changed. `dashboard_apply` puts it live.
     return web.json_response(
@@ -2277,9 +2281,39 @@ async def api_dashboard_save(request: web.Request) -> web.Response:
             "saved": {"package": art.slug, "package_version": int(art.version), **counts},
             # What the page raised over a synthetic copy of the record; None for a block layout.
             "verification": verification,
+            # Every field with where its value comes from, and the hand-written ones named,
+            # so the crewmate sees which cells stay current only while it keeps writing them.
+            "fields": sources,
+            "manual_fields": manual,
+            **(
+                {"manual_note": _crewmate_prompts.text("dashboard.manual_fields_note")}
+                if manual
+                else {}
+            ),
             "next": "dashboard_apply puts this page live on your Dashboard as a new version",
         }
     )
+
+
+def field_sources(package: Mapping[str, Any]) -> list[dict[str, str]]:
+    """Each field the package's model declares, with its source: ``fold:<fold>.<path>`` or ``manual``.
+
+    ``manual`` is a field the crewmate fills itself (``{"agentic": true}``); everything
+    else names the crew-log fold the gateway pushes it from.
+    """
+    types = ((package.get("model") or {}).get("types")) or {}
+    out: list[dict[str, str]] = []
+    for name, spec in types.items():
+        source = spec.get("source") if isinstance(spec, Mapping) else None
+        if isinstance(source, Mapping) and source.get("agentic") is True:
+            where = "manual"
+        elif isinstance(source, Mapping) and source.get("fold"):
+            path = str(source.get("path") or "")
+            where = f"fold:{source['fold']}" + (f".{path}" if path else "")
+        else:
+            where = "manual"
+        out.append({"field": str(name), "source": where})
+    return out
 
 
 def _apply_own_package(slug: str, crew_name: str, slot: str) -> Any:

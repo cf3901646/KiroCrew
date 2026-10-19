@@ -1312,7 +1312,17 @@ the page's shape in the canonicaliser:
   at the HTTP layer and described below.
 - **`view.html` is an agent-written page, and its shape is checked while its
   author is still there.** Exactly one of `view.html` or `view.blocks`, never
-  both and never neither. The HTML is an inline BODY: the host supplies
+  both and never neither. A package bound to a crewmate (`bound_to` of
+  `crewmate:<slug>`) is `view.html` only: the gate refuses its `view.blocks` and
+  names the `view.html` shape to send instead
+  (`dashboard_package._require_html_for_a_crewmate`), because the crewmate
+  Dashboard tab draws a page and has no block renderer. A package bound to a
+  session may still be written as blocks. The page is drawn wearing its
+  `theme`: `member_dashboard_fields.render_package_page` puts one `<style>`
+  ahead of the page, after the host's own stylesheet, holding the tokens on
+  `:root` and then `theme.css` (`dashboard_package.theme_stylesheet`, which runs
+  the gate's own theme check, so a stored theme the gate would now refuse draws
+  nothing and the page keeps the host's look). The HTML is an inline BODY: the host supplies
   `<!doctype>`, `<html>`, `<head>` and `<body>` and owns the page's security
   policy, so a document tag in the field is refused — by
   `dashboard_frame.validate_page`, called here so the author meets the frame's

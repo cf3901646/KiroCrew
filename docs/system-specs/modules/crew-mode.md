@@ -2464,7 +2464,41 @@ no shipped page named for its slug) has no page in force and shows the
 SUGGESTIONS page (`CrewDashboardEmpty`): the
 crewmate's face under a first-person bubble and three prompts that only fill its
 chat box (`onAct`); a staged preview and a root session's Overview are not
-affected. A refresh opens the Dashboard tab rather than the strip's persisted
+affected. The tab draws no section of its own above the page: **Waiting on
+you** is data the crewmate's own page binds, the `waiting` slot fold (see "A
+crewmate's own record as folds" below). The list it folds is
+`dashboard/member_waiting.waiting_items`, newest first, at most five: every
+speech row of the crewmate's own thread since the person last answered whose
+text ends in an `[OPTIONS: ...]` line, every `ask_question` card still waiting
+there, and every change card still pending there, titled by the card. The
+person answers with a row a human send path marks
+(`history.HUMAN_TURN_META_KEY`: a typed message, an `[OPTIONS]` chip pressed in
+the chat, a steer) or by pressing a change card in that thread (applied,
+partial, failed on apply, or declined; its `finished_at` is the answer's time):
+either ends the walk, so every question asked before it clears. It reads the
+same rows and parser the sidebar's question badge reads
+(`slot.sidebar_messages`, the bounded tail a restored thread holds before its
+window loads) and the change-card store, so a gateway wake, which writes no row
+and presses no card, keeps an item, and so does a card that only expired.
+
+**A crewmate's own record as folds.** Two facts a page about a crewmate's
+work needs are recorded into its own DM session log by the gateway, as
+snapshots, at the point each changes (`dashboard/crewmate_feed.py`, started
+from the app's startup hook beside `bind_serving_loop`, a no-op with the crew
+log off): `dashboard/goal_recorded` after every write of the goal record
+(`member_goals.add_change_listener`), folded as `goal` (the first goal's text,
+the goals, each milestone's target, latest reading, `met` by
+`key_result_met` and time, and the met/open/total counts), and
+`dashboard/waiting_changed` when `waiting_items` differs from the last list
+recorded, checked after each growth of that DM log (`emit.add_growth_listener`,
+coalesced for 0.4 s), folded as `waiting` (`items`, `count`, `newest`). An
+entry is appended only when its snapshot differs from the last one this
+process recorded for that thread, so the check's own append records nothing.
+A goal written before the thread had a session (the create flow sets it before
+the first turn) has nowhere to land then, so the thread's first growth that
+finds no goal recorded reads the record off the loop and records it.
+Both folds are slot-keyed and eager, so the frame's live push moves a page
+bound to them with no `dashboard_write`. A refresh opens the Dashboard tab rather than the strip's persisted
 focus, once per crewmate and strip bucket per page load (`dashboardOnLoad.ts`),
 so a tab picked afterwards or on an in-app return stays. Its "Opening the
 conversation" line is withheld while the main column already says it
