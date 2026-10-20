@@ -467,9 +467,18 @@ they can see, and nothing changes.
 replies go, not in a thread. Besides **Approve** and **Reject** it has **Trust this
 channel**: only you (the bot's owner) can use it, and it approves that call and puts the
 channel's session on Trust, through the same audited change as the dashboard's Trust
-button. The channel then gets a one-line warning that tools run without asking and that
-workers the agent starts inherit it. Anyone else who clicks it is told they can't, and
-nothing changes.
+button. The channel then gets a one-line warning that tools run without asking, for the
+agent's workers too, including ones already running. Anyone else who clicks it is told
+they can't, and nothing changes. A card answered by a switch to Trust (yours or a
+worker's) changes in place to say it ran under Trust. The card shows a command once: the
+command line, plus the other arguments only when there are any.
+
+**Workers follow the channel's mode.** Changing the channel's approval mode from the first
+message, `/<command> trust` or a **Trust this channel** button changes it for the workers
+the channel's agent is already running as well, raising or lowering it the same way, each
+change recorded like the dashboard's. Raising to Trust also answers their waiting tool
+prompts, as switching a session to Trust does on the dashboard. A person-only question
+from a worker is never answered for you. Sessions the agent did not start are left alone.
 
 **Workers ask in the channel too.** When the channel's agent starts worker sessions, a
 worker's approval prompt is also posted in the channel, headed with the worker's title
@@ -477,8 +486,8 @@ worker's approval prompt is also posted in the channel, headed with the worker's
 arguments, with secrets and suspicious links redacted, and nothing from the worker's
 conversation. Only you can answer it: **Approve** and **Reject** answer the worker's
 prompt exactly as the dashboard's buttons do, and **Trust this channel** approves it and
-puts the channel's own session on Trust. A worker that is already running keeps its own
-mode; workers started after that start with at most Trust. If the prompt is answered in
+puts the whole channel on Trust, this worker and its siblings included. If the prompt is
+answered in
 the dashboard or nobody answers in time, the card changes to say so and its buttons go.
 
 ---

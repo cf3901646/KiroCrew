@@ -819,6 +819,7 @@ from kiro_crew.session_agent_selection import (  # noqa: F401
     session_agent_selection_kind,
 )
 from kiro_crew.session_capabilities import CapabilityStartupError
+from kiro_crew.slack.code_channels.approval_picker import keep_card as keep_code_channel_card
 from kiro_crew.slack.code_channels.binding import mirror_post_thread as code_channel_post_thread
 from kiro_crew.slack.code_channels.binding import notify_turn_end as notify_code_channel_turn_end
 from kiro_crew.slack.code_channels.binding import (
@@ -7703,7 +7704,11 @@ async def _run_chat(
                     if _slack_approval_ts is not None:
                         try:
                             resolve_linked_approval(slot._slack_channel, _slack_approval_ts)
-                            if state.slack_client:
+                            # A code-channel card its Trust answered says so in
+                            # place; every other card goes once decided.
+                            if state.slack_client and not keep_code_channel_card(
+                                slot._slack_channel, _slack_approval_ts
+                            ):
                                 await state.slack_client.delete_message(
                                     slot._slack_channel, _slack_approval_ts
                                 )

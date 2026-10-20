@@ -201,7 +201,7 @@ def test_trust_this_channel_on_a_worker_card(relay: Any) -> None:
     _card, fut = asyncio.run(go())
     assert fut.result() == "approved"
     assert relay.slot._trust is True  # the channel's session
-    assert relay.worker._trust is False  # a running worker keeps its mode
+    assert relay.worker._trust is True  # a running worker follows the channel
     assert [r for r in relay.mode_rows if r["operation"] == "mode_change:trust"]
     assert [p for p in relay.slack.posts if "*Trust*" in p[1]]
 

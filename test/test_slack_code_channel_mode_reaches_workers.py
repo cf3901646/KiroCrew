@@ -1,0 +1,248 @@
+"""A code channel's approval mode reaches the workers its session already started.
+
+Kyle's build-5 test: the channel was put on Trust, yet the conductor's running
+worker still posted an approval card, because the mode only reached workers
+started afterwards. Now a channel mode change (the card's Trust button, the
+kickoff select, ``/kirocrew trust``) applies the same mode to the channel
+session's own live workers through the same audited path, raising and lowering;
+a raise to Trust answers their pending prompts, and the channel's own, the way
+a mid-wait dashboard switch does, and each Slack card says so in place. Nothing
+outside that lineage changes, and a person-only question card is never answered.
+
+The approval card in a code channel also shows the command once.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+import pytest
+from slack_code_channels_helpers import OWNER
+from test_slack_code_channel_agent_surface import CH, SLOT, env  # noqa: F401
+from test_slack_code_channel_trust_from_slack import _slot, chan  # noqa: F401
+from test_slack_code_channel_worker_approvals import (  # noqa: F401
+    REQUEST,
+    WORKER,
+    _click,
+    _done,
+    _run_relay,
+    relay,
+)
+
+from kiro_crew.slack.code_channels import approval_picker
+from kiro_crew.slack.code_channels import worker_approvals as wa
+from kiro_crew.slack.code_channels.store import store
+from kiro_crew.slack.handler import post_linked_approval
+
+
+def _set(mode: str, via: str = "select") -> Any:
+    async def go() -> Any:
+        binding = await asyncio.to_thread(store().get_binding, CH)
+        return await approval_picker.set_channel_mode(binding, mode, OWNER, via=via)
+
+    return go()
+
+
+def _worker_rows(e: Any) -> list[dict[str, Any]]:
+    return [r for r in e.sel.ops(approval_picker.OPERATION) if f"worker={WORKER}" in r["resources"]]
+
+
+# ── 1. The mode reaches the channel's live workers ────────────────────────
+
+
+def test_an_existing_worker_inherits_a_raise_and_a_lower(relay: Any) -> None:  # noqa: F811
+    async def go() -> None:
+        assert (await _set("trust")).result == "set"
+        assert relay.worker._trust is True
+        assert (await _set("normal")).result == "set"
+
+    asyncio.run(go())
+    assert relay.slot._trust is False and relay.worker._trust is False
+    assert relay.worker._trust_reads is False
+    # Each worker change is the dashboard switch's own audited mutation ...
+    assert [r["operation"] for r in relay.mode_rows].count("mode_change:trust") == 2
+    # ... plus this feature's row naming the worker, once per change.
+    rows = _worker_rows(relay)
+    assert len(rows) == 2 and all("result=worker_set" in r["resources"] for r in rows)
+    assert "mode=trust" in rows[0]["resources"] and "mode=normal" in rows[1]["resources"]
+
+
+def test_a_worker_is_lowered_to_a_channel_already_on_ask(relay: Any) -> None:  # noqa: F811
+    """The channel holds Ask already; a worker someone raised is lowered to it."""
+    relay.worker._trust = True
+    assert asyncio.run(_set("normal")).result == "unchanged"
+    assert relay.worker._trust is False
+
+
+def test_trust_reads_reaches_the_worker_too(relay: Any) -> None:  # noqa: F811
+    asyncio.run(_set("trust_reads"))
+    assert relay.worker._trust_reads is True and relay.worker._trust is False
+
+
+@pytest.mark.parametrize("case", ["other_creator", "no_creator", "linked", "grandchild"])
+def test_an_unrelated_session_is_untouched(relay: Any, case: str) -> None:  # noqa: F811
+    other = _slot(key="chat-8-1", channel="")
+    other._slack_linked = case == "linked"
+    other._created_by = {
+        "other_creator": "chat-3-1",
+        "no_creator": "",
+        "linked": SLOT,
+        "grandchild": WORKER,
+    }[case]
+    relay.state._slots[other.key] = other
+
+    async def go() -> asyncio.Future:
+        fut = asyncio.get_running_loop().create_future()
+        other._approval_futures["req-x"] = fut
+        await _set("trust")
+        return fut
+
+    fut = asyncio.run(go())
+    assert other._trust is False and not fut.done()
+    assert not [r for r in relay.sel.ops(approval_picker.OPERATION) if "chat-8-1" in r["resources"]]
+
+
+# ── 2. A raise to Trust answers pending cards, which say so in place ──────
+
+
+def _post_channel_card(e: Any, tool_input: str = "ls") -> str:
+    ts = asyncio.run(
+        post_linked_approval(
+            e.slack,
+            CH,
+            None,
+            "req-own",
+            f"dashboard:{SLOT}",
+            "Run shell",
+            tool_input,
+            channel_trust=True,
+        )
+    )
+    assert ts
+    return ts
+
+
+def test_pending_cards_resolve_on_a_raise(relay: Any) -> None:  # noqa: F811
+    own_ts = _post_channel_card(relay)
+
+    async def go() -> tuple[asyncio.Future, asyncio.Future, Any]:
+        own = asyncio.get_running_loop().create_future()
+        relay.slot._approval_futures["req-own"] = own
+        card, worker_fut = await _run_relay(relay)
+        assert (await _set("trust", via="command")).result == "set"
+        # The worker's own cleanup runs after its prompt is answered.
+        await wa.finish(_done(card), worker_fut.result(), deny_cause="", host_ended=False)
+        return own, worker_fut, card
+
+    own, worker_fut, card = asyncio.run(go())
+    assert own.result() == "approved" and worker_fut.result() == "approved"
+    by_ts = {u[1]: u for u in relay.slack.updates}
+    assert "Ran under Trust" in by_ts[own_ts][2]
+    assert "Ran under Trust" in by_ts[card.ts][2]  # not "approved in the dashboard"
+    assert all(b.get("type") != "actions" for b in by_ts[card.ts][3] or [])
+    # The runner's cleanup keeps the re-written channel card rather than deleting it.
+    assert approval_picker.keep_card(CH, own_ts) is True
+    assert approval_picker.keep_card(CH, own_ts) is False  # consumed once
+
+
+def test_a_lower_answers_no_pending_card(relay: Any) -> None:  # noqa: F811
+    relay.slot._trust_reads = True
+
+    async def go() -> asyncio.Future:
+        card, fut = await _run_relay(relay)
+        await _set("normal")
+        return fut
+
+    assert not asyncio.run(go()).done()
+
+
+def test_a_person_only_question_card_is_never_auto_answered(relay: Any) -> None:  # noqa: F811
+    """``ask_question`` cards wait in ``_question_futures``, which no Trust sweeps."""
+
+    async def go() -> asyncio.Future:
+        fut = asyncio.get_running_loop().create_future()
+        relay.state._question_futures = {"ask-1": fut}
+        relay.state._pending_questions = {"ask-1": {"slot": WORKER}}
+        await _set("trust")
+        return fut
+
+    fut = asyncio.run(go())
+    assert not fut.done() and relay.worker._trust is True
+
+
+# ── 3. Trust this channel on a worker's card ──────────────────────────────
+
+
+def test_trust_on_a_worker_card_raises_the_whole_channel(relay: Any) -> None:  # noqa: F811
+    sibling = _slot(key="chat-5-2", channel="")
+    sibling._slack_linked = False
+    sibling._created_by = SLOT
+    relay.state._slots[sibling.key] = sibling
+
+    async def go() -> tuple[Any, asyncio.Future, asyncio.Future]:
+        card, fut = await _run_relay(relay)
+        other = asyncio.get_running_loop().create_future()
+        sibling._approval_futures["req-s"] = other
+        assert await wa.handle_click(relay.orch, _click(OWNER, card, wa.TRUST_ACTION_ID))
+        await wa.finish(_done(card), fut.result(), deny_cause="", host_ended=False)
+        return card, fut, other
+
+    card, fut, other = asyncio.run(go())
+    assert fut.result() == "approved" and other.result() == "approved"
+    assert relay.slot._trust and relay.worker._trust and sibling._trust
+    last = [u for u in relay.slack.updates if u[1] == card.ts][-1]
+    assert "Trust" in last[2] and f"<@{OWNER}>" in last[2]
+    assert any("result=approved" in r["resources"] for r in wa_rows(relay))
+
+
+def wa_rows(e: Any) -> list[dict[str, Any]]:
+    return e.sel.ops(wa.OPERATION)
+
+
+# ── 4. The card shows the command once ────────────────────────────────────
+
+
+def _card_blocks(e: Any, tool_input: str, channel_trust: bool = True) -> list[dict[str, Any]]:
+    asyncio.run(
+        post_linked_approval(
+            e.slack,
+            CH,
+            None if channel_trust else "1.0",
+            REQUEST,
+            f"dashboard:{SLOT}",
+            "Running: git status",
+            tool_input,
+            channel_trust=channel_trust,
+        )
+    )
+    return e.slack.blocks_posts[-1][1]
+
+
+def _texts(blocks: list[dict[str, Any]]) -> list[str]:
+    out = [b["text"]["text"] for b in blocks if b.get("type") == "section"]
+    out += [e["text"] for b in blocks if b.get("type") == "context" for e in b["elements"]]
+    return out
+
+
+def test_a_code_channel_card_shows_the_command_once(chan: Any) -> None:  # noqa: F811
+    texts = _texts(_card_blocks(chan, json.dumps({"command": "git status"})))
+    assert sum("git status" in t for t in texts) == 1
+    assert "```git status```" in texts
+    assert not any('"command"' in t for t in texts)
+
+
+def test_other_arguments_still_show_as_json(chan: Any) -> None:  # noqa: F811
+    texts = _texts(
+        _card_blocks(chan, json.dumps({"command": "git status", "cwd": "/repo", "timeout": 30}))
+    )
+    assert sum("git status" in t for t in texts) == 1
+    extra = [t for t in texts if '"cwd"' in t]
+    assert len(extra) == 1 and '"command"' not in extra[0] and "30" in extra[0]
+
+
+def test_an_ordinary_card_is_unchanged(chan: Any) -> None:  # noqa: F811
+    texts = _texts(_card_blocks(chan, json.dumps({"command": "git status"}), channel_trust=False))
+    assert any('"command"' in t for t in texts)  # the raw input, as before
+    assert any(t.startswith(":lock:") and "Running: git status" in t for t in texts)

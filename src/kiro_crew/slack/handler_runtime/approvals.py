@@ -398,26 +398,39 @@ def _build_approval_blocks(
         # Security: scan for exfiltration URLs and credentials before posting
         sanitized, _ = redact_exfiltration_urls(event.tool_input)
         sanitized, _ = redact_credentials(sanitized)
-        # The input can close the code fence itself, so on a code channel's card
-        # its entities are escaped too, not only the footer's.
-        sanitized = _esc(sanitized)
-        # Truncate with marker if exceeds Slack limit
-        if len(sanitized) > _SLACK_SECTION_TEXT_LIMIT:
-            detail = (
-                sanitized[: _SLACK_SECTION_TEXT_LIMIT - len(_TRUNCATION_MARKER)]
-                + _TRUNCATION_MARKER
+        # A code channel's card shows the command once: the readable command
+        # line, then the other arguments as JSON only when there are any.
+        command, extra = None, None
+        if channel_trust:
+            from kiro_crew.slack.code_channels.approval_picker import command_and_rest
+
+            command, extra = command_and_rest(sanitized)
+        parts = [command, extra] if command is not None else [sanitized]
+        for part in parts:
+            if part is None:
+                continue
+            # The input can close the code fence itself, so on a code channel's
+            # card its entities are escaped too, not only the footer's.
+            part = _esc(part)
+            # Truncate with marker if exceeds Slack limit
+            if len(part) > _SLACK_SECTION_TEXT_LIMIT:
+                part = (
+                    part[: _SLACK_SECTION_TEXT_LIMIT - len(_TRUNCATION_MARKER)] + _TRUNCATION_MARKER
+                )
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"```{part}```"},
+                },
             )
-        else:
-            detail = sanitized
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"```{detail}```"},
-            },
-        )
+        if command is not None:
+            # The command is on the card already: the lock line keeps only the
+            # purpose, and goes when there is none.
+            footer = f":lock: {tag}{_esc(purpose)}" if event.tool_purpose else ""
 
     blocks.append({"type": "actions", "elements": buttons})
-    blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": footer}]})
+    if footer:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": footer}]})
     return blocks
 
 

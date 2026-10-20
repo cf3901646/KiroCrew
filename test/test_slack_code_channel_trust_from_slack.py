@@ -237,7 +237,7 @@ def test_trust_this_channel_approves_the_call_and_puts_the_channel_on_trust(chan
     # One warning line, top-level in the channel; the card says what happened.
     warnings = [p for p in chan.slack.posts if "*Trust*" in p[1]]
     assert len(warnings) == 1 and warnings[0][0] == CH and warnings[0][2] is None
-    assert "inherit" in warnings[0][1]
+    assert "already running" in warnings[0][1]
     assert chan.slack.updates[-1][1] == ts
 
 

@@ -79,8 +79,8 @@ CURRENT_TEXT = (
 TRUST_CALL_LABEL = "Trust this channel"
 TRUST_WARNING = (
     "⚠️ <@{user}> put this channel on *Trust*: the agent's tools run without asking, "
-    "and workers it starts inherit that. Set *Approval mode* in the first message back to "
-    "Ask, or run `/{command} trust ask`, to turn it off."
+    "and so do its workers, including ones already running. Set *Approval mode* in the "
+    "first message back to Ask, or run `/{command} trust ask`, to turn it off."
 )
 FAILED_TEXT = "⚠️ Could not change the approval mode: {reason}"
 NO_SESSION_TEXT = "This channel's session isn't open right now. Try again in a moment."
@@ -90,6 +90,36 @@ NOT_LIVE_TEXT = "⛔ That approval isn't waiting any more, so nothing changed."
 #: The same words ``apply_approval_mode`` answers a spent prompt with (its 409).
 STALE_REASON = "the approval is no longer waiting"
 TRUSTED_CARD_TEXT = "🤝 Approved, and this channel is now on Trust (<@{user}>)."
+RAN_UNDER_TRUST = "🤝 Ran under Trust: <@{user}> put this channel on Trust."
+
+#: Code-channel approval cards the channel's Trust answered and re-wrote in
+#: place, so ``_run_chat``'s cleanup keeps them instead of deleting them.
+_kept_cards: set[str] = set()
+
+
+def command_and_rest(tool_input: str) -> tuple[str | None, str | None]:
+    """How a code channel's card shows a tool's input, so the command appears once.
+
+    ``(command, the other arguments as JSON or None)`` when *tool_input* is a JSON
+    object with a string ``command``; ``(None, None)`` otherwise (shown as is).
+    """
+    try:
+        data = json.loads(tool_input)
+    except (TypeError, ValueError):
+        return None, None
+    if not isinstance(data, dict) or not isinstance(data.get("command"), str):
+        return None, None
+    rest = {k: v for k, v in data.items() if k != "command" and v not in (None, "", [], {})}
+    return data["command"], (json.dumps(rest, indent=2, ensure_ascii=False) if rest else None)
+
+
+def keep_card(channel: str, ts: str) -> bool:
+    """Whether ``_run_chat`` should keep (not delete) this card; consumed once."""
+    key = f"{channel}:{ts}"
+    if key in _kept_cards:
+        _kept_cards.discard(key)
+        return True
+    return False
 
 
 def _audit(outcome: str, resources: str, error: str = "") -> None:
@@ -225,8 +255,9 @@ def _lock(channel_id: str) -> asyncio.Lock:
 
 
 def reset() -> None:
-    """Forget per-channel locks (tests)."""
+    """Forget per-channel locks and kept cards (tests)."""
     _locks.clear()
+    _kept_cards.clear()
 
 
 async def _apply(
@@ -298,12 +329,19 @@ async def set_channel_mode(
             return ModeResult("refused", NOT_LIVE_TEXT)
         if current_mode(slot) == mode and not _yolo_active():
             _audit("allowed", f"{resources} result=unchanged")
+            # The channel already holds it; its live workers may not (they were
+            # started before it changed).
+            await _apply_to_workers(state, binding, slot, mode, user, via)
             return ModeResult("unchanged", f"ℹ️ This channel is already on *{label(mode)}*.")
+        own_cards = _own_pending_cards(binding, slot) if mode == "trust" else []
+        _kept_cards.update(own_cards)
         try:
             ok, error = await _apply(state, slot, mode, user, still_live)
         except Exception:
             logger.warning("code channel %s: approval mode change failed", channel, exc_info=True)
             ok, error = False, "the change failed"
+        if not ok:
+            _kept_cards.difference_update(own_cards)
         if not ok and error == STALE_REASON:
             _audit("denied", resources, STALE_REASON)
             return ModeResult("refused", NOT_LIVE_TEXT)
@@ -311,11 +349,89 @@ async def set_channel_mode(
             _audit("error", f"{resources} result=refused", error)
             return ModeResult("refused", FAILED_TEXT.format(reason=error))
         _audit("allowed", f"{resources} result=set")
+        await _settle_own_cards(binding, own_cards, user)
+        await _apply_to_workers(state, binding, slot, mode, user, via)
     if mode == "trust":
         await _post_channel(channel, TRUST_WARNING.format(user=user, command=_command()))
     await _refresh(binding, note=SET_NOTE.format(label=label(mode), user=user))
     ended = YOLO_OFF_TEXT if yolo_before and not _yolo_on() else ""
     return ModeResult("set", f"✅ This channel is now on *{label(mode)}*.{ended}")
+
+
+def _own_pending_cards(binding: Binding, slot: Any) -> list[str]:
+    """``channel:ts`` of the cards the channel's own session has waiting."""
+    from kiro_crew.dashboard.chat_utils import effective_session_key
+    from kiro_crew.slack.handler import _linked_approvals
+
+    session = effective_session_key(slot)
+    prefix = f"{binding.channel_id}:"
+    return [
+        key
+        for key, entry in list(_linked_approvals.items())
+        if key.startswith(prefix) and str(getattr(entry, "session_key", "")) == session
+    ]
+
+
+async def _settle_own_cards(binding: Binding, keys: list[str], user: str) -> None:
+    """Re-write the channel's own cards its Trust answered (the sweep did it)."""
+    slack = surface.slack()
+    if slack is None or not keys:
+        return
+    text = RAN_UNDER_TRUST.format(user=user)
+    for key in keys:
+        ts = key.split(":", 1)[1]
+        try:
+            await slack.update_message(binding.channel_id, ts, text=text, blocks=None)
+        except Exception:
+            logger.debug("trusted channel card not updated", exc_info=True)
+
+
+async def _apply_to_workers(
+    state: Any, binding: Binding, slot: Any, mode: str, user: str, via: str
+) -> None:
+    """Put the channel session's live workers on *mode* too (never raises).
+
+    Only :func:`.worker_approvals.live_workers` (the relay's own lineage), each
+    through the same audited mutation, so a worker is never left above the
+    channel and a raise to Trust answers its pending prompts the way a
+    mid-wait dashboard switch does; their relayed cards say so in place.
+    """
+    from kiro_crew.slack.code_channels import worker_approvals
+
+    for worker in worker_approvals.live_workers(state, slot):
+        resources = (
+            f"channel={binding.channel_id} user={user} mode={mode} via={via} "
+            f"worker={getattr(worker, 'key', '')}"
+        )
+        if current_mode(worker) == mode and not _yolo_active():
+            continue
+        # Claim the relayed cards first: the sweep wakes the worker, whose own
+        # cleanup would otherwise label them "approved in the dashboard".
+        cards = []
+        if mode == "trust":
+            cards = [
+                c
+                for c in worker_approvals.pending_cards(str(getattr(worker, "key", "")))
+                if not c.answered and not c.future.done()
+            ]
+            for card in cards:
+                card.answered = True
+        try:
+            ok, error = await _apply(state, worker, mode, user)
+        except Exception:
+            logger.warning("code channel worker mode change failed", exc_info=True)
+            ok, error = False, "the change failed"
+        _audit(
+            "allowed" if ok else "error",
+            f"{resources} result={'worker_set' if ok else 'worker_refused'}",
+            error,
+        )
+        line = RAN_UNDER_TRUST.format(user=user)
+        for card in cards:
+            if ok and card.future.done():
+                await worker_approvals.settle_under_trust(card, line)
+            else:
+                card.answered = False  # not ours to label: its own outcome will be
 
 
 async def _post_channel(channel: str, text: str) -> None:

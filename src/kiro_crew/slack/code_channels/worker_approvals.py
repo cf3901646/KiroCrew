@@ -115,6 +115,37 @@ def _worker_title(slot: Any) -> str:
     return _safe(str(getattr(slot, "title", "") or "") or str(getattr(slot, "key", "")))
 
 
+def live_workers(state: Any, channel_slot: Any) -> list[Any]:
+    """The live sessions *channel_slot* (a code channel's own session) created.
+
+    The same lineage :func:`channel_of_worker` reads, from the channel's side:
+    a slot whose ``_created_by`` names the channel's session and that is not
+    itself linked to Slack. Nothing else: no other session's workers, no
+    grandchildren.
+    """
+    key = str(getattr(channel_slot, "key", "") or "")
+    if state is None or not key:
+        return []
+    return [
+        s
+        for s in list((getattr(state, "_slots", None) or {}).values())
+        if s is not channel_slot
+        and str(getattr(s, "_created_by", "") or "") == key
+        and not getattr(s, "_slack_linked", False)
+    ]
+
+
+def pending_cards(worker_key: str) -> list[WorkerCard]:
+    """The relayed cards still live for *worker_key*'s prompts."""
+    return [c for c in list(_cards.values()) if c.worker_key == worker_key]
+
+
+async def settle_under_trust(card: WorkerCard, line: str) -> None:
+    """A card whose prompt the channel's Trust answered: say so, in place."""
+    card.answered = True
+    await _update(card, line)
+
+
 async def channel_of_worker(state: Any, slot: Any) -> Binding | None:
     """The code channel whose session created *slot*, or None.
 
@@ -367,13 +398,21 @@ async def handle_click(orch: Any, payload: dict[str, Any]) -> bool:
             return True
         line = TRUSTED_BY
     approved = action_id != REJECT_ACTION_ID
-    resolved = False
+    # Trust this channel also puts the worker on Trust, whose sweep may already
+    # have approved this very call: that is this click's answer.
+    resolved = (
+        action_id == TRUST_ACTION_ID
+        and card.future.done()
+        and not card.future.cancelled()
+        and str(card.future.result()).startswith("approved")
+    )
     try:
-        resolved = bool(
-            state.resolve_slot_approval(
-                worker, card.request_id, approved, expected_future=card.future
+        if not resolved:
+            resolved = bool(
+                state.resolve_slot_approval(
+                    worker, card.request_id, approved, expected_future=card.future
+                )
             )
-        )
     except Exception:
         logger.warning("code channel %s: worker approval not resolved", channel, exc_info=True)
     if not resolved:

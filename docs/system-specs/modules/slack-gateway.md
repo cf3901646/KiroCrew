@@ -2033,14 +2033,23 @@ the hooks never fire, and `kirocrew-core` lists none of the tools.
   `channels` inbound ceiling to `worker_approvals.handle_click`, which re-checks the
   lineage live, applies the code-channel gates and resolves the worker's own future
   with `state.resolve_slot_approval` pinned to the future the card was posted for
-  (never a state-wide id lookup). Trust puts the channel's session on Trust; running
-  workers keep their mode. A Trust click on either card changes no mode unless the
+  (never a state-wide id lookup). A channel mode change (`set_channel_mode`, from
+  either card, the kickoff select or the command) also runs `apply_approval_mode` on
+  each of `worker_approvals.live_workers` (the same `_created_by` lineage, direct
+  children only, not Slack-linked), raising and lowering, audited per worker
+  (`result=worker_set`); a raise to Trust answers their pending prompts and the
+  channel's own through that call's slot-scoped sweep, and the cards are re-written in
+  place ("Ran under Trust"; the channel's own are kept from `_run_chat`'s delete via
+  `approval_picker.keep_card`). `ask_question` cards wait in `_question_futures`,
+  which no sweep reads, so they are never answered. A Trust click on either card changes no mode unless the
   card's prompt is still waiting right before the mutation. `_run_chat` starts the
   relay as a task (no await between the future's registration and its `try`) and its
   `finally` calls `worker_approvals.finish`, which updates the card in place
   (approved / declined in the dashboard, timed out, or ended by the host) unless a
   click already did. Code-channel cards escape mrkdwn entities in the footer and the
-  tool arguments. SEL: `slack.code_channel.worker_approval`.
+  tool arguments, and show a JSON input's `command` once (its own code block, the
+  other arguments as JSON only when there are any, and no command in the lock line).
+  SEL: `slack.code_channel.worker_approval`.
 
 ## Dependencies
 
