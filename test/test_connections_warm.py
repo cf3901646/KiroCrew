@@ -93,6 +93,57 @@ async def test_a_cancel_during_the_spawn_kills_the_partial_runtime(
     assert len(killed) == 1, "the constructed runtime was leaked"
 
 
+# ── defect: a failed mint spawn logs only the exception class, not its cause ──
+
+
+@pytest.mark.asyncio
+async def test_a_failed_spawn_logs_the_exception_message_not_only_its_class(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, _agents_dir: Path
+):
+    """A spawn that raises degrades to the cold path, and the warning it leaves must carry
+    the exception's own message. ``AcpRuntimeError``, ``SandboxUnavailableError`` and the
+    spawn gates each author a sentence naming what failed and the remedy -- the Windows
+    internal-sandbox delegation path raises one such sentence -- so logging the class name
+    alone leaves an operator unable to tell a missing kiro-cli from a sandbox a host cannot
+    provide, which is the only signal the cold path's per-provider retries do not repeat."""
+    detail = "no OS-level sandbox backend is available on this host"
+
+    class _RaisesWithDetail:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def spawn(self, start_priority=None) -> None:
+            raise RuntimeError(detail)
+
+        def is_alive(self) -> bool:
+            return False
+
+    async def _record_kill(runtime: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(warm, "_kill_quietly", _record_kill)
+    monkeypatch.setattr(warm, "_remove_warm_mint_specs", lambda: None)
+    monkeypatch.setattr(warm, "_write_warm_mint_specs", lambda plan, agents_dir: None)
+    monkeypatch.setattr(warm, "_unowned_plan_specs", lambda plan, agents_dir: [])
+    monkeypatch.setattr(warm, "_acp_runtime_factory", lambda: _RaisesWithDetail)
+    monkeypatch.setattr(warm._warm_mint, "_retiring", [])
+
+    with caplog.at_level("WARNING", logger="kiro_crew.connections.warm"):
+        result = await warm._warm_mint._ensure_locked([_provider("linear")])
+
+    assert result is None, "a failed spawn must degrade to the cold path"
+    spawn_warnings = [
+        rec.getMessage()
+        for rec in caplog.records
+        if rec.name == "kiro_crew.connections.warm"
+        and "Shared mint process spawn failed" in rec.getMessage()
+    ]
+    assert spawn_warnings, "the failed spawn left no warning"
+    message = spawn_warnings[0]
+    assert "RuntimeError" in message, "the warning dropped the exception class"
+    assert detail in message, "the warning dropped the exception's own cause"
+
+
 # ── defect: settlement is not reached on every post-activation exit ──
 
 
