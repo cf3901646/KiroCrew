@@ -763,16 +763,31 @@ class TestCancellableBuildChild:
     def test_an_error_while_waiting_kills_reaps_and_names_the_step(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reap_platform: str
     ) -> None:
-        """An OSError out of the wait (here from the poll interval) kills the group."""
+        """An OSError out of the wait (here from the poll interval) kills the group.
+
+        The failure is injected on the FIRST poll, once the child has written its
+        pidfile, so the group is real and reapable but the raise never races the
+        build timeout: the loop sets its deadline, finds the child still running
+        and the deadline not reached, then calls this hook on its first iteration.
+        The hook waits on the pidfile the child writes -- a positive handshake,
+        bounded so a child that never starts fails by name -- and only then raises,
+        so the loop is left before its deadline is consulted a second time.
+        """
         pidfile = tmp_path / "pids"
         real_sleep = time.sleep
         raised: list[bool] = []
 
         def failing_sleep(secs: float) -> None:
-            if pidfile.exists() and not raised:
-                raised.append(True)
-                raise OSError(12, "Cannot allocate memory")
-            real_sleep(secs)
+            if raised:
+                real_sleep(secs)
+                return
+            deadline = time.monotonic() + 30.0
+            while not pidfile.exists():
+                if time.monotonic() >= deadline:
+                    raise AssertionError("the build child never wrote its pidfile")
+                real_sleep(0.02)
+            raised.append(True)
+            raise OSError(12, "Cannot allocate memory")
 
         monkeypatch.setattr(wheel_engine.time, "sleep", failing_sleep)
         pids: tuple[int, ...] = ()
