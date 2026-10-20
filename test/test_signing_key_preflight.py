@@ -18,12 +18,15 @@ from pathlib import Path
 
 import pytest
 
+from kiro_crew import sandbox as kc_sandbox
 from kiro_crew.dashboard import token_secret as ts
 from kiro_crew.doctor_checks import access as doctor_access
 from kiro_crew.slack import gateway
 
-# The real probe, captured before the autouse fixture below neutralises it.
-_REAL_INSIDE = ts._inside_agent_sandbox
+# The real confinement probe, captured before the autouse fixture below
+# neutralises it. One probe now backs the masked state (it reads the Linux
+# cgroup, the macOS Seatbelt verdict, and the launcher marker).
+_REAL_EVIDENCE = kc_sandbox.agent_confinement_evidence
 
 # A fixed, full-length key (D6: no unseeded draws). Distinct from every
 # truncated fixture below and from any ephemeral secret the loader would mint.
@@ -34,15 +37,16 @@ _FULL_KEY = bytes(range(1, ts._MIN_KEY_BYTES + 1))
 def _outside_the_agent_sandbox(_floor_monkeypatch):
     """These tests model the HOST (gateway boot, an operator's shell). The suite
     itself may run inside a Kiro Crew agent sandbox, where the launcher exports the
-    marker and places the process under ``kirocrew-agents.slice``; neutralise both
-    so a real file is judged by its size. The tests about the masked state set the
-    signals back on purpose."""
+    marker and places the process under ``kirocrew-agents.slice``; neutralise the
+    single confinement probe at its source so a real file is judged by its size.
+    The tests about the masked state set the signals back on purpose."""
     _floor_monkeypatch.delenv("KIROCREW_SANDBOX_ACTIVE", raising=False)
+    # Boot preflight and doctor both read sandbox.agent_confinement_evidence;
+    # the preflight imports it locally from kiro_crew.sandbox, and doctor reads
+    # it through cli_doctor.sandbox (the same module object).
+    _floor_monkeypatch.setattr(kc_sandbox, "agent_confinement_evidence", lambda **kw: None)
     _floor_monkeypatch.setattr(
-        ts, "_inside_agent_sandbox", lambda cgroup_path="/proc/self/cgroup": False
-    )
-    _floor_monkeypatch.setattr(
-        doctor_access.cli_doctor.sandbox, "agent_confinement_evidence", lambda: None
+        doctor_access.cli_doctor.sandbox, "agent_confinement_evidence", lambda **kw: None
     )
 
 
@@ -117,12 +121,14 @@ class TestSigningKeyHealth:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         """The launcher bind-mounts an EMPTY file over the key inside every agent
-        sandbox. Read as a size, that is "short"; read correctly, it is unobservable,
-        and the difference is whether an operator gets told to move a healthy key."""
+        sandbox. Read as a size, that is "short"; read with the confinement verdict
+        the caller supplies, it is unobservable, and the difference is whether an
+        operator gets told to move a healthy key."""
         key = tmp_path / ts._SECRET_KEY_FILE
         key.write_bytes(b"")  # what the sandbox shows
-        monkeypatch.setattr(ts, "_inside_agent_sandbox", lambda cgroup_path="": True)
-        assert ts.signing_key_health(key) == ("masked", key)
+        # The caller (boot preflight / doctor) passes the single probe's verdict;
+        # inside the sandbox agent_confinement_evidence() sees the cgroup slice.
+        assert ts.signing_key_health(key, confined=True) == ("masked", key)
 
     def test_caller_supplied_confinement_is_masked(self, tmp_path: Path) -> None:
         """macOS Seatbelt has no cgroup to read; ``doctor`` passes the kernel's
@@ -166,13 +172,14 @@ class TestSigningKeyHealth:
 
 
 class TestConfinementProbes:
-    """The Linux signal behind ``"masked"`` that an in-sandbox process cannot scrub."""
+    """The single confinement probe behind ``"masked"``: the launcher marker and
+    the Linux ``kirocrew-agents.slice`` cgroup an in-sandbox process cannot scrub."""
 
     def test_the_marker_alone_answers_true(self, monkeypatch, tmp_path: Path) -> None:
         monkeypatch.setenv("KIROCREW_SANDBOX_ACTIVE", "1")
         empty = tmp_path / "cgroup"
         empty.write_text("0::/user.slice/user-1000.slice/session-1.scope\n")
-        assert _REAL_INSIDE(str(empty)) is True
+        assert _REAL_EVIDENCE(cgroup_path=str(empty)) is not None
 
     def test_the_agents_slice_answers_true_without_the_marker(
         self, monkeypatch, tmp_path: Path
@@ -182,17 +189,28 @@ class TestConfinementProbes:
         cg.write_text(
             "0::/user.slice/user-1000.slice/kirocrew.slice/kirocrew-agents.slice/run-1.scope\n"
         )
-        assert _REAL_INSIDE(str(cg)) is True
+        reason = _REAL_EVIDENCE(cgroup_path=str(cg))
+        assert reason is not None and "kirocrew-agents.slice" in reason
+
+    def test_the_slice_is_matched_against_the_constant_not_a_literal(self) -> None:
+        """One name for the slice spelling: the probe matches against
+        ``sandbox_cgroup._CGROUP_AGENTS_SLICE`` so a rename moves in one place."""
+        from kiro_crew.sandbox_cgroup import _CGROUP_AGENTS_SLICE
+
+        assert _CGROUP_AGENTS_SLICE == "kirocrew-agents.slice"
 
     def test_a_plain_session_answers_false(self, monkeypatch, tmp_path: Path) -> None:
         monkeypatch.delenv("KIROCREW_SANDBOX_ACTIVE", raising=False)
         cg = tmp_path / "cgroup"
         cg.write_text("0::/user.slice/user-1000.slice/session-1.scope\n")
-        assert _REAL_INSIDE(str(cg)) is False
+        assert _REAL_EVIDENCE(cgroup_path=str(cg)) is None
 
     def test_an_unreadable_cgroup_file_answers_false(self, monkeypatch, tmp_path: Path) -> None:
+        """Fail-safe: an unreadable or absent cgroup file withholds the reason, it
+        never fabricates one, so a confined process is never read as unconfined
+        here (callers pair this with a structural sealed-artifact probe)."""
         monkeypatch.delenv("KIROCREW_SANDBOX_ACTIVE", raising=False)
-        assert _REAL_INSIDE(str(tmp_path / "missing")) is False
+        assert _REAL_EVIDENCE(cgroup_path=str(tmp_path / "missing")) is None
 
 
 class TestBootSecretLoad:
@@ -338,7 +356,7 @@ class TestBootPreflight:
     ) -> None:
         key = tmp_path / ts._SECRET_KEY_FILE
         key.write_bytes(b"")
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("short", key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: ("short", key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "short")
 
         with caplog.at_level(logging.CRITICAL, logger=gateway.logger.name):
@@ -363,7 +381,7 @@ class TestBootPreflight:
         short by the time the loader read it. The load is what the gateway will sign
         with, so its verdict refuses the boot."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: (state, key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: (state, key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "short")
         with pytest.raises(SystemExit) as exit_info:
             gateway.signing_key_preflight()
@@ -375,7 +393,7 @@ class TestBootPreflight:
         empty file can be what the ``lstat`` sees. The loader waits that window out
         and reads the finished key; the boot follows the load, not the probe."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("short", key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: ("short", key))
         loads: list[str] = []
 
         def _load() -> str:
@@ -392,7 +410,7 @@ class TestBootPreflight:
         """When a caller memoized the secret first, the load has no verdict to give,
         so the probe decides."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("short", key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: ("short", key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "already-loaded")
         with pytest.raises(SystemExit):
             gateway.signing_key_preflight()
@@ -403,7 +421,7 @@ class TestBootPreflight:
         """An unreadable short key: the loader falls back without being able to
         say why. Only a confirmed persisted load may clear the probe's short."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("short", key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: ("short", key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "ephemeral")
         with pytest.raises(SystemExit) as exit_info:
             gateway.signing_key_preflight()
@@ -416,7 +434,7 @@ class TestBootPreflight:
         """An unwritable home degrades to an ephemeral secret and still boots; the
         preflight judges truncation only."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: (state, key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: (state, key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "ephemeral")
         gateway.signing_key_preflight()  # does not raise
 
@@ -429,7 +447,7 @@ class TestBootPreflight:
         goes ahead on the loader's WARNING instead of refusing."""
         key = tmp_path / ts._SECRET_KEY_FILE
         key.write_bytes(b"\x01" * ts._MIN_KEY_BYTES)
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: (state, key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: (state, key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "ephemeral")
         gateway.signing_key_preflight()  # does not raise
         assert capsys.readouterr().err == ""
@@ -439,7 +457,7 @@ class TestBootPreflight:
         self, tmp_path: Path, monkeypatch, state: str
     ) -> None:
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: (state, key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: (state, key))
 
         def _must_not_load() -> str:
             raise AssertionError("only ok/absent/short/unstatable keys are loaded by the preflight")
@@ -453,7 +471,9 @@ class TestBootPreflight:
         """The leaf answered EIO to ``lstat`` and the loader could not read it
         either: the boot goes ahead on the loader's WARNING, and doctor reports it."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("unstatable", key))
+        monkeypatch.setattr(
+            gateway.token_secret, "signing_key_health", lambda **kw: ("unstatable", key)
+        )
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "ephemeral")
         gateway.signing_key_preflight()  # does not raise
         assert capsys.readouterr().err == ""
@@ -461,7 +481,9 @@ class TestBootPreflight:
     def test_an_unstatable_key_that_loads_boots(self, tmp_path: Path, monkeypatch, capsys) -> None:
         """A transient stat error the load reads past is not a refusal."""
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("unstatable", key))
+        monkeypatch.setattr(
+            gateway.token_secret, "signing_key_health", lambda **kw: ("unstatable", key)
+        )
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "loaded")
         gateway.signing_key_preflight()  # does not raise
         assert capsys.readouterr().err == ""
@@ -471,7 +493,7 @@ class TestBootPreflight:
         self, tmp_path: Path, monkeypatch, capsys, state: str
     ) -> None:
         key = tmp_path / ts._SECRET_KEY_FILE
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: (state, key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: (state, key))
         gateway.signing_key_preflight()  # does not raise
         assert capsys.readouterr().err == ""
 
@@ -665,7 +687,7 @@ class TestSigningKeyRemedy:
         monkeypatch.setattr(gateway, "restart_command_hint", _probe)
         key = tmp_path / ts._SECRET_KEY_FILE
         key.write_bytes(b"")
-        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda: ("short", key))
+        monkeypatch.setattr(gateway.token_secret, "signing_key_health", lambda **kw: ("short", key))
         monkeypatch.setattr(gateway.token_secret, "load_boot_secret", lambda: "short")
 
         with pytest.raises(SystemExit):

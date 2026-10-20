@@ -171,6 +171,7 @@ _MOVED: dict[str, tuple[str, ...]] = {
         _CC_EXPOSE_FILES _CC_FILES _SENSITIVE_ENV_PREFIXES _PYTHON_ENV_PREFIXES
         _AGENT_DENIED_ENV_KEYS _sandbox_policy _SANDBOX_MODE_FALLBACK configured_sandbox_mode
         _IN_SANDBOX_MARKER _IN_SANDBOX_LEVEL_VAR _TIER_ORDINALS _mode_to_level _SANDBOX_MODE_ALIASES
+        _CGROUP_AGENTS_SLICE
         effective_sandbox_mode _governance_sandbox_floor _clamp_sandbox_mode _floor_mandates_sandbox
         _clamp_sandbox_mode_to_floor
         """.split()),
@@ -283,7 +284,7 @@ _MOVED: dict[str, tuple[str, ...]] = {
         """.split()),
     "kiro_crew.sandbox_cgroup": tuple("""
         _CGROUP_DEFAULT_MAX_PROCESSES _CGROUP_DEFAULT_CPU_WEIGHT _CGROUP_MEMORY_FRACTION
-        _CGROUP_FALLBACK_MAX_MEMORY_MB _CGROUP_AGENTS_SLICE _instance_slice_token
+        _CGROUP_FALLBACK_MAX_MEMORY_MB _instance_slice_token
         _agents_slice_name _default_max_memory_mb _CGROUP_SCOPE_PROBE
         _CGROUP_SCOPE_PROBE_SESSION _CGROUP_SCOPE_PROBE_AT _CGROUP_SCOPE_PROBE_TTL_SECONDS
         _CGROUP_SCOPE_PROBE_LOCK _CGROUP_WARNED _CGROUP_LINGER_REMEDY
@@ -398,6 +399,7 @@ _CARVED_IMPORTS: dict[str, frozenset[str]] = {
         }
     ),
     "kiro_crew.sandbox_slice": frozenset({"kiro_crew.sandbox_cgroup"}),
+    "kiro_crew.sandbox_cgroup": frozenset({"kiro_crew.sandbox_tiers"}),
     "kiro_crew.sandbox_rlimit": frozenset({"kiro_crew.sandbox_workspace"}),
     "kiro_crew.sandbox_spawn": frozenset(
         {

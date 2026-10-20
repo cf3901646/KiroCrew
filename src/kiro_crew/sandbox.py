@@ -311,7 +311,6 @@ if TYPE_CHECKING:  # the forwarded names, visible to type checkers and IDEs
         sandbox_exec_argv,
     )
     from kiro_crew.sandbox_cgroup import (  # noqa: F401
-        _CGROUP_AGENTS_SLICE,
         _CGROUP_DEFAULT_CPU_WEIGHT,
         _CGROUP_DEFAULT_MAX_PROCESSES,
         _CGROUP_FALLBACK_MAX_MEMORY_MB,
@@ -626,6 +625,7 @@ if TYPE_CHECKING:  # the forwarded names, visible to type checkers and IDEs
         _CC_DIRS,
         _CC_EXPOSE_FILES,
         _CC_FILES,
+        _CGROUP_AGENTS_SLICE,
         _IN_SANDBOX_LEVEL_VAR,
         _IN_SANDBOX_MARKER,
         _PACKAGED_INSTALL_DIR_NAMES,

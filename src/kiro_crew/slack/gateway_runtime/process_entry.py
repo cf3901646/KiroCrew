@@ -160,7 +160,16 @@ def signing_key_preflight() -> None:
     alone when an earlier caller already memoized the secret.
     Blocking filesystem I/O: call it off the event loop.
     """
-    state, key_path = token_secret.signing_key_health()
+    # The single confinement probe (sandbox.agent_confinement_evidence) reads the
+    # kirocrew-agents.slice cgroup on Linux, so a masked key inside the sandbox is
+    # not read as truncated here. Local import: cli.main() has popped the launcher
+    # marker by now, and token_secret keeps kiro_crew.sandbox off its import chain,
+    # so the caller supplies the verdict.
+    from kiro_crew.sandbox import agent_confinement_evidence
+
+    state, key_path = token_secret.signing_key_health(
+        confined=agent_confinement_evidence() is not None
+    )
     if state in ("ok", "absent", "short", "unstatable"):
         loaded = token_secret.load_boot_secret()
         if loaded in ("loaded", "short"):

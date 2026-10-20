@@ -27,6 +27,7 @@ from kiro_crew.sandbox_probe import (
     _remedy_for_step,
 )
 from kiro_crew.sandbox_tiers import (
+    _CGROUP_AGENTS_SLICE,
     _IN_SANDBOX_MARKER,
     _SANDBOX_MODE_ALIASES,
     _STANDARD_DIRS,
@@ -411,14 +412,30 @@ def _classify_unavailable(transient: bool) -> str:
     return "foreign_sandbox" if _inside_macos_sandbox() else "no_backend"
 
 
-def agent_confinement_evidence() -> str | None:
+def agent_confinement_evidence(cgroup_path: str = "/proc/self/cgroup") -> str | None:
     """Evidence that THIS process runs under agent-shell confinement, or ``None``.
 
     The runtime half of the operator-attestation check used by authorization
     gates whose input must come from a human at a host terminal and never from
-    an agent-spawned process (the app dev-mode out-of-install confirmation).
+    an agent-spawned process (the app dev-mode out-of-install confirmation), and
+    the single confinement probe behind the signing-key ``"masked"`` state
+    (``token_secret.signing_key_health``, its doctor and boot-preflight callers).
     Returns a short human-readable reason when there is ANY evidence of
     confinement, ``None`` when there is none.
+
+    Three signals, each read in a way that survives the next one being absent:
+
+    * ``KIROCREW_SANDBOX_ACTIVE`` — exported only by the namespace launcher /
+      seatbelt env prefix. Cheap, but ``cli.main()`` pops it before any
+      subcommand, so it is an extra, never the sole signal a subcommand sees.
+    * the macOS kernel's Seatbelt verdict — the only cheap signal on Darwin,
+      which has no cgroup to read.
+    * on Linux, membership in the ``kirocrew-agents.slice`` cgroup scope that
+      ``cgroup_scope_argv`` places every agent process under. ``cli.main()``
+      cannot pop a cgroup, and ``/proc/self/cgroup`` cannot be edited from
+      inside, so this is the durable signal that outlives an environment scrub.
+      Matched against :data:`sandbox_cgroup._CGROUP_AGENTS_SLICE`, never a
+      literal, so a renamed slice moves in one place.
 
     Deny-direction only, and deliberately so: each signal is unforgeable *in
     the direction of refusal*. A present ``KIROCREW_SANDBOX_ACTIVE`` marker in
@@ -426,17 +443,30 @@ def agent_confinement_evidence() -> str | None:
     was forged or leaked — see :func:`_macos_sandbox_state`); a kernel verdict
     of "Seatbelt-confined" for a non-KiroCrew sandbox (kiro-cli's internal
     seatbelt, an operator-wrapped process) still means "not a bare operator
-    terminal", which is the question being asked. The converse is NOT
-    guaranteed: a ``None`` does not prove a human — an agent can strip the
-    marker with ``env -u``, and Linux offers no cheap kernel verdict — which
-    is why callers pair this with a structural probe of a sealed artifact
-    (``_CREW_READONLY_LEAVES``) that the OS sandbox denies regardless of the
-    environment. Never use this function to *grant* anything.
+    terminal", which is the question being asked. An unreadable or absent
+    ``/proc/self/cgroup`` yields no evidence, which is fail-safe here: it only
+    withholds the extra reason, never fabricates one, so a confined process is
+    never read as unconfined on the basis of this signal (the converse — a
+    ``None`` proving a human — is never claimed). That converse is NOT
+    guaranteed in general: a ``None`` does not prove a human — an agent can
+    strip the marker with ``env -u``, and off a cgroup host Linux offers no
+    cheap kernel verdict — which is why callers pair this with a structural
+    probe of a sealed artifact (``_CREW_READONLY_LEAVES``) that the OS sandbox
+    denies regardless of the environment. Never use this function to *grant*
+    anything.
     """
     if os.environ.get(_IN_SANDBOX_MARKER):
         return f"the {_IN_SANDBOX_MARKER} marker is set (agent-sandboxed process)"
     if _macos_sandbox_state() is True:
         return "the kernel reports this process is Seatbelt-confined"
+    # The single name for the slice is sandbox_tiers (beside _IN_SANDBOX_MARKER),
+    # a lower layer this module already depends on — never a literal.
+    try:
+        with open(cgroup_path, encoding="utf-8") as fh:
+            if _CGROUP_AGENTS_SLICE in fh.read():
+                return f"this process is in the {_CGROUP_AGENTS_SLICE} cgroup scope"
+    except OSError:
+        pass
     return None
 
 

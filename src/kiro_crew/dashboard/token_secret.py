@@ -119,12 +119,13 @@ def signing_key_health(
       ``lstat``), so the size seen here says nothing about the real file. Reading
       the mask as ``"short"`` would hand an operator a remedy that deletes a
       healthy key by hand, so the answer is keyed on evidence that the PROCESS
-      is confined, never on the file's shape alone: on Linux the process's cgroup is under
-      ``kirocrew-agents.slice``, and the caller may pass *confined* for evidence
-      this module does not probe itself (``kirocrew doctor`` passes the macOS
-      kernel's Seatbelt verdict from ``sandbox.agent_confinement_evidence``). The
-      launcher's ``KIROCREW_SANDBOX_ACTIVE`` marker counts too, but only as an
-      extra: ``cli.main()`` pops it before any subcommand runs. A file on another
+      is confined, never on the file's shape alone. This module does not probe
+      confinement itself — it keeps ``kiro_crew.sandbox`` off its import chain —
+      so the caller passes *confined*: both the boot preflight and ``kirocrew
+      doctor`` pass ``sandbox.agent_confinement_evidence() is not None``, the one
+      probe that reads the ``kirocrew-agents.slice`` cgroup on Linux, the macOS
+      kernel's Seatbelt verdict, and the launcher's ``KIROCREW_SANDBOX_ACTIVE``
+      marker. A file on another
       device from its directory is NOT evidence on its own: an operator can mount
       a filesystem at the key leaf on a host, and reading that as a mask would
       withhold the refusal from a truncated key there.
@@ -139,7 +140,7 @@ def signing_key_health(
         from kiro_crew.config.loader import config_dir
 
         key_path = config_dir() / _SECRET_KEY_FILE
-    if confined or _inside_agent_sandbox():
+    if confined:
         return "masked", key_path
     try:
         info = os.lstat(key_path)
@@ -172,26 +173,6 @@ def open_is_denied(key_path: Path) -> bool:
         return False
     os.close(fd)
     return False
-
-
-def _inside_agent_sandbox(cgroup_path: str = "/proc/self/cgroup") -> bool:
-    """Confinement evidence that survives an environment scrub.
-
-    The launcher-only ``KIROCREW_SANDBOX_ACTIVE`` marker is checked first because
-    it is cheap and, in the direction of refusal, harmless when forged (an
-    over-answer of ``"masked"`` withholds a remedy, never hands one out). It is
-    not sufficient: ``cli.main()`` removes it before dispatch. On Linux every
-    agent process is placed under ``kirocrew-agents.slice`` by the sandbox
-    launcher, and ``/proc/self/cgroup`` cannot be edited from inside, so that
-    membership is the durable signal.
-    """
-    if os.environ.get("KIROCREW_SANDBOX_ACTIVE"):
-        return True
-    try:
-        with open(cgroup_path, encoding="utf-8") as fh:
-            return "kirocrew-agents.slice" in fh.read()
-    except OSError:
-        return False
 
 
 # The staging directory and its validator live in ``kiro_crew.hidden_leaf_staging`` so
