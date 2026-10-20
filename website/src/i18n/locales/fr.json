@@ -8134,10 +8134,40 @@
       "preview_more_lines_other": "… {{count}} lignes de plus"
     },
     "privacyChapter": {
+      "changeLater": "Vous pouvez modifier ce choix à tout moment dans Paramètres > Confidentialité, avec les interrupteurs « Envoyer le signal d'utilisation anonyme » et « Enregistrer les métriques ».",
+      "collectedFeatures": "La fréquence d'utilisation des fonctionnalités, ainsi que les erreurs et les nouvelles tentatives",
+      "collectedInstallId": "Un identifiant d'installation aléatoire qui n'est pas lié à vous",
+      "collectedTimings": "La durée des opérations, comme le démarrage, les tours et les appels d'outils",
+      "collectedTitle": "Ce qui est collecté",
+      "collectedVersions": "La version de l'application, la version de Python et la façon dont {{productName}} a été installé",
       "continue": "Continuer",
       "eyebrow": "Confidentialité",
-      "subtitle": "Les cinq champs anonymes que {{productName}} envoie, et comment les désactiver.",
-      "title": "Confidentialité"
+      "intro": "{{productName}} enregistre la façon dont l'application est utilisée, pour nous aider à trouver des bugs et à la rendre plus rapide. C'est activé tant que vous ne le désactivez pas.",
+      "introHeartbeatOnly": "Une fois par jour, {{productName}} envoie un court signal anonyme pour que nous sachions combien de copies sont utilisées. L'enregistrement de l'utilisation de l'application sur cette machine est désactivé.",
+      "keepOn": "Laisser activé",
+      "neverCredentials": "Les mots de passe, clés ou autres identifiants",
+      "neverFiles": "Le contenu des fichiers, les chemins de fichiers ou les noms de dépôts",
+      "neverIdentity": "Votre nom d'hôte, nom d'utilisateur ou adresse IP",
+      "neverPrompts": "Vos prompts ou les réponses du modèle",
+      "neverTitle": "Ce qui n'est jamais collecté",
+      "offReasonConfig": "Elles ont été désactivées dans les Paramètres, dans le fichier de configuration ou avec kirocrew telemetry disable.",
+      "offReasonDoNotTrack": "La variable d'environnement DO_NOT_TRACK est définie : rien n'est enregistré ni envoyé.",
+      "offReasonEnv": "La variable d'environnement {{envVar}} les désactive.",
+      "offReasonGovernance": "La politique de sécurité de votre administrateur les désactive. Elles ne peuvent pas être activées ici.",
+      "saveFailed": "Votre choix n'a pas pu être enregistré : rien n'a changé. Réessayez.",
+      "statusUnavailable": "Impossible de vérifier ce qui est activé pour le moment. Cet écran liste tout ce qui peut être collecté.",
+      "title": "Confidentialité",
+      "titleHeartbeatOnly": "Un signal quotidien est activé",
+      "titleOff": "Les données d'utilisation sont désactivées sur cette machine",
+      "titleOn": "Les données d'utilisation sont activées",
+      "turnOff": "Désactiver",
+      "turnOffPinned": "Elles sont toujours activées : une variable d'environnement ou config.local.json les maintient. Désactivez-les à cet endroit, puis réessayez.",
+      "turnOffPinnedEnv": "Elles sont toujours activées : la variable d'environnement {{envVar}} les maintient. Supprimez-la, puis réessayez.",
+      "turnOffPinnedOverlay": "Elles sont toujours activées : config.local.json dans le dossier de données de {{productName}} les maintient. Retirez-en les entrées de télémétrie, puis réessayez.",
+      "whereBody": "Les données d'utilisation sont stockées sur cette machine. Une fois par jour, {{productName}} envoie un court signal anonyme avec la version de l'application et l'identifiant aléatoire.",
+      "whereBodyHeartbeatOnly": "Rien n'est enregistré sur cette machine. Une fois par jour, {{productName}} envoie un court signal anonyme avec la version de l'application et l'identifiant aléatoire.",
+      "whereBodyOff": "Rien n'est enregistré sur cette machine et rien n'est envoyé.",
+      "whereTitle": "Où vont ces données"
     },
     "pierreEditorImpl": {
       "highlighting_restarting_editing_available": "La coloration redémarre. La modification reste possible.",
@@ -8602,8 +8632,8 @@
       "quote_hint": "Cite la sélection dans le composeur de cette discussion — ta réponse part dans la discussion principale"
     },
     "lessonSaved": {
-      "saved": "Leçon enregistrée\u202f: {{rule}}",
-      "updated": "Leçon mise à jour\u202f: {{rule}}",
+      "saved": "Leçon enregistrée : {{rule}}",
+      "updated": "Leçon mise à jour : {{rule}}",
       "review": "Voir les leçons"
     },
     "selfChange": {

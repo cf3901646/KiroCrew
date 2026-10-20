@@ -70,6 +70,7 @@ from kiro_crew.apps.plugin_import import (
     read_manifest_name,
 )
 from kiro_crew.apps.scaffold import scaffold_app
+from kiro_crew.beacon import PRIVACY_NOTICE_VERSION
 from kiro_crew.cli_server import _marker_port, resolve_client_port
 from kiro_crew.config import config_dir
 from kiro_crew.config.loader import (
@@ -488,17 +489,23 @@ def _tailnet(args: argparse.Namespace) -> None:
 
 
 def _telemetry(args: argparse.Namespace) -> None:
-    """Inspect or toggle the anonymous usage beacon (``kirocrew telemetry``).
+    """Inspect or toggle usage data: local metric recording and the anonymous beacon.
 
     ``status`` is read-only and never materializes an install id. ``disable`` /
-    ``enable`` persist ``telemetry.beacon_enabled`` to config.json, so the choice
+    ``enable`` persist BOTH switches, ``telemetry.enabled`` (local recording) and
+    ``telemetry.beacon_enabled`` (the heartbeat), to config.json, so the choice
     survives restarts and upgrades — an env-var-only opt-out would silently lapse
-    the next time the user launched from a different shell.
+    the next time the user launched from a different shell. Both also record that
+    the user was told (``dashboard.privacy_acked`` and
+    ``dashboard.privacy_ack_version``), the same two fields the dashboard's
+    Privacy chapter writes.
     """
     action = getattr(args, "telemetry_action", None) or "status"
     cfg = KiroCrewConfig.load()
 
     if action == "status":
+        print(_format_recording_status(cfg))
+        print()
         print(
             beacon.format_status(
                 beacon.status(
@@ -570,6 +577,7 @@ def _telemetry(args: argparse.Namespace) -> None:
                 sys.exit(1)
             sections[name] = existing
 
+        sections["telemetry"]["enabled"] = want
         sections["telemetry"]["beacon_enabled"] = want
         data["telemetry"] = sections["telemetry"]
         # Running this command IS the informed choice the first-run chapter exists to
@@ -578,6 +586,7 @@ def _telemetry(args: argparse.Namespace) -> None:
         # because the first-egress gate would keep waiting for a dashboard screen the
         # user may never open.
         sections["dashboard"]["privacy_acked"] = True
+        sections["dashboard"]["privacy_ack_version"] = PRIVACY_NOTICE_VERSION
         data["dashboard"] = sections["dashboard"]
         return data
 
@@ -618,9 +627,21 @@ def _telemetry(args: argparse.Namespace) -> None:
     # printed "DISABLED" — a false promise on a privacy control is worse than an
     # error, so re-read the effective config and report the shadowing file.
     try:
-        effective = KiroCrewConfig.load().telemetry.beacon_enabled
+        loaded = KiroCrewConfig.load().telemetry
+        effective = loaded.beacon_enabled
+        recording = loaded.enabled
     except Exception:  # noqa: BLE001 - diagnostics must not mask the write
         effective = want
+        recording = want
+    if recording != want:
+        state = "ON" if recording else "OFF"
+        print(
+            f"Warning: wrote {path.name}, but local metric recording is still {state}: an "
+            "overlay in config.local.json takes precedence.",
+            file=sys.stderr,
+        )
+        print("   Edit telemetry.enabled there too.", file=sys.stderr)
+        sys.exit(1)
     if effective != want:
         state = "ENABLED" if effective else "DISABLED"
         print(
@@ -636,11 +657,52 @@ def _telemetry(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if want:
-        print("✅ Anonymous usage beacon ENABLED (one heartbeat per day).")
+        print("Usage data ENABLED: local metric recording and the anonymous beacon")
+        print("   (one heartbeat per day).")
         print("   Run 'kirocrew telemetry status' to see exactly what is sent.")
     else:
-        print("✅ Anonymous usage beacon DISABLED. Nothing will be sent.")
+        print("Usage data DISABLED: local metric recording and the anonymous beacon")
+        print("   are off. Nothing will be recorded or sent.")
         print(f"   You can also delete {beacon.INSTALL_ID_FILE} from the data home.")
+    _report_env_pin(want)
+
+
+def _format_recording_status(cfg: KiroCrewConfig) -> str:
+    """The local metric recording half of ``kirocrew telemetry status``."""
+    from kiro_crew.metrics.provider import env_pin, pin_env_var
+
+    pin = env_pin()
+    effective = cfg.telemetry.enabled if pin is None else pin
+    lines = [
+        "Local metric recording (stays on this machine)",
+        "",
+        f"  Enabled:     {'yes' if effective else 'no'}",
+        f"  Config:      telemetry.enabled is {'true' if cfg.telemetry.enabled else 'false'}",
+    ]
+    if pin is not None:
+        lines.append(f"  Pinned by:   {pin_env_var()} (the config value has no effect)")
+    lines.append(
+        f"  Notice:      privacy notice version {cfg.dashboard.privacy_ack_version} "
+        f"acknowledged (current: {PRIVACY_NOTICE_VERSION})"
+    )
+    return "\n".join(lines)
+
+
+def _report_env_pin(want: bool) -> None:
+    """Say so when an env var keeps either switch from following the write."""
+    from kiro_crew.metrics.provider import env_pin, pin_env_var
+
+    pin = env_pin()
+    if pin is not None and pin != want:
+        print(
+            f"Warning: {pin_env_var()} is set in this shell and overrides telemetry.enabled.",
+            file=sys.stderr,
+        )
+    if want and beacon.is_env_opted_out():
+        print(
+            f"Warning: {beacon.opt_out_env_var()} is set in this shell, so the beacon stays off.",
+            file=sys.stderr,
+        )
 
 
 def _handle_secrets(args: argparse.Namespace) -> None:
