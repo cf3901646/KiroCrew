@@ -2264,7 +2264,7 @@ upgrade for a policy that loads today.
 `on_tool_call(..., tool_kind=, raw_params=)` carries these from the ACP event
 (`AcpEvent.tool_kind` / `.raw_tool_params`); the call sites thread them
 (`llm_helpers`, `subagent`, `task_executor`, `task_planner`, dashboard
-`chat_runner`, slack `handler`). **The `EVENT_PERMISSION_REQUEST` event the gate
+`chat_turn/tool_approval.py`, slack `handler`). **The `EVENT_PERMISSION_REQUEST` event the gate
 runs on must carry `raw_tool_params`** — `acp/client_tool_events.py` caches the structured
 rawInput at the ToolCall notification (`_tool_call_params`, keyed by
 `toolCallId`) and `acp/client_permissions.py` attaches it to the later permission event, because that

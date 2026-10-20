@@ -3467,8 +3467,8 @@ Delivery debt captures the member id, elapsed time, and credits when a completio
 ### PostToolUse Firing
 
 The subagent loop fires `PreToolUse` and `PostToolUse` (on `EVENT_TOOL_RESULT`),
-mirroring `chat_runner.py`. Where `PreToolUse` runs depends on the backend
-(`agent_sdk/spec_hooks.py:turn_spec_hooks`):
+mirroring the dashboard's tool phases (`dashboard/chat_turn/tool_rows.py`, `tool_results.py`).
+Where `PreToolUse` runs depends on the backend (`agent_sdk/spec_hooks.py:turn_spec_hooks`):
 
 - On a backend that receives the agent spec's `hooks` itself, `PreToolUse` is an
   informational fire on `EVENT_TOOL_CALL` (`fire_tool_hooks`) and cannot refuse
@@ -3507,7 +3507,7 @@ Caller sites:
   `permission_pre_tool_block` through the ladder's `SpecHooks` floor
 - `task_executor.py`: passes `parent_session_key` and `agent_role` (no
   `subagent_id`), with the same gated/ungated split
-- `chat_runner.py` / `llm_helpers_parts/turn_stream.py`: unchanged (parent context, defaults to None)
+- `chat_turn/` / `llm_helpers_parts/turn_stream.py`: unchanged (parent context, defaults to None)
 
 ## Prompt and CLI integration
 

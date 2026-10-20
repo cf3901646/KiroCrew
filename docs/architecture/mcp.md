@@ -4532,7 +4532,7 @@ is what `nothing_to_do`, `monitor_start`, `monitor_watch`, `monitor_update`,
 `monitor_stop`, `autonudge_stop`, `set_project`, `suggest_followup`,
 `reset_conversation` and `chat_tag` do (`session_directive.DIRECTIVE_TOOLS`). The tool validates its arguments and
 returns a human-readable confirmation plus a marker line carrying the validated
-payload and **no session key**. `dashboard/chat_runner`'s tool-result handler
+payload and **no session key**. `_on_tool_result` (`dashboard/chat_turn/tool_results.py`)
 decodes the marker, applies the effect against **its own** `slot.key`, then
 strips the marker from the stored transcript. Sub-agent isolation is therefore
 structural rather than cryptographic: a sub-agent's tool result flows through the

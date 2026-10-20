@@ -2314,22 +2314,25 @@ NON_EGRESS_REDACTION_MODULES: frozenset[str] = frozenset(
         "dashboard/session_control_parts/model_switch.py",
         "dashboard/session_control_parts/session_create.py",
         # The owners composed into dashboard/chat_runner.py: the redactor calls of the runner's
-        # helpers, _run_chat's closures and its prologue phases, unchanged (deny rows, the
-        # eager-spawn error detail, file-change snapshots, the MCP sign-in banner, the fallback
-        # hop's model id, native cards, prompt and skill mentions, the queued-turn drain, the
-        # admission logs, the stream redactors, cross-surface legs, the segment flush, tool rows,
-        # the terminal directive's tool-call ids, the partial reply and stream flushes, spec-hook
-        # notices, the stats footer). Their output reaches the surfaces it reached from the runner.
+        # helpers, _run_chat's closures, its prologue phases and its tool and permission arms,
+        # unchanged (deny rows, eager-spawn errors, file-change snapshots, the MCP sign-in banner,
+        # the fallback model id, native cards, prompt and skill mentions, the queued-turn drain, the
+        # admission and permission logs, the stream redactors, cross-surface legs, the segment
+        # flush, tool rows and results, directive tool-call ids, the partial reply and stream
+        # flushes, spec-hook notices, the stats footer). Their output reaches the runner's surfaces.
         "dashboard/chat_turn/deny_chokepoints.py",
         "dashboard/chat_turn/eager_spawn.py",
         "dashboard/chat_turn/file_changes.py",
         "dashboard/chat_turn/mcp_session.py",
         "dashboard/chat_turn/model_fallback.py",
         "dashboard/chat_turn/native_cards.py",
+        "dashboard/chat_turn/permission_prompt.py",
         "dashboard/chat_turn/prompt_assembly.py",
         "dashboard/chat_turn/queue_drain.py",
         "dashboard/chat_turn/recipient.py",
         "dashboard/chat_turn/segment_flush.py",
+        "dashboard/chat_turn/tool_approval.py",
+        "dashboard/chat_turn/tool_results.py",
         "dashboard/chat_turn/tool_rows.py",
         "dashboard/chat_turn/turn_admission.py",
         "dashboard/chat_turn/turn_entry.py",
