@@ -18,6 +18,8 @@ import { extractDenyDetail, extractDenyNotice } from '../../utils/denyReason'
 import { registerToolPill } from '../../store/toolPillRegistry'
 import { ROW_PILL_BUTTON_CLASS, ROW_PILL_WRAPPER_CLASS } from './rowPill'
 import { extractToolFilePath } from '../../utils/toolFilePath'
+import { extractToolImagePaths } from '../../utils/toolImagePaths'
+import { ToolImageThumbnails } from './ToolImageThumbnails'
 import { countDiffStats } from '../../utils/diffLineCounts'
 import { isWaitToolTitle } from '../../utils/waitToolTitle'
 import { isSafePath } from '../../utils/safePath'
@@ -756,6 +758,10 @@ function ToolCallLineBody({ message, running: _running, slot, onFileOpen, disclo
   // folded either. Density relief is per-card (the fold chip below) plus the
   // size caps in presentToolDiff.
   const denied = isRejected || isAutoDenied
+  // Images an image-mode read looked at, previewed under the row. Not for a
+  // rejected or auto-denied call: the agent never read them, and a preview
+  // would say it had.
+  const imagePaths = useMemo(() => (denied ? [] : extractToolImagePaths(input)), [denied, input])
   // An edit run's diffs, one per call in order, read from each member's
   // persisted input: editRuns admitted every member on exactly that input as a
   // card-sized, untruncated diff. A run the lead's own log entry calls denied
@@ -1254,6 +1260,11 @@ function ToolCallLineBody({ message, running: _running, slot, onFileOpen, disclo
         </button>
       )}
       </div>
+
+      {/* Image-read thumbnails: visible on the folded row, so a glance shows
+          which picture the agent read. A sibling of the pill, so a click on a
+          thumbnail opens the viewer and never toggles the details panel. */}
+      <ToolImageThumbnails paths={imagePaths} version={effectiveId || toolCallId || undefined} />
 
       {/* Diff chip: the one-line handle for every diff presentation. For a
           promoted card it folds/unfolds the card below and stays put while the
