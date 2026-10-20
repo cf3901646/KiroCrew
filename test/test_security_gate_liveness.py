@@ -416,7 +416,15 @@ def _url_payload_command(n: int) -> str:
 #: paragraphs, glue comments, owner imports, owner list, install, class swap and ``__all__``; and
 #: their ``TYPE_CHECKING`` manifests (two each in ``redaction`` and ``exfil``, one in
 #: ``denied_rules``). Every moved statement is unchanged; no rule, threshold or pass changed.
-_PACKAGE_LINE_BUDGET = 31_509
+#:
+#: Raised again, from 31,509, for the host-set snapshot on
+#: ``exfil.redact_exfiltration_urls_with_records`` and its two-tuple wrapper: one
+#: optional ``exempt_hosts`` keyword that REPLACES the live platform read and the
+#: scoped override when a caller supplies the set it keyed a cache on, so the display
+#: cache stores output computed under exactly the set its key names. Fourteen lines:
+#: the keyword on both signatures, a two-branch read and the docstrings saying why.
+#: No rule widened or narrowed; the default path is the live read.
+_PACKAGE_LINE_BUDGET = 31_523
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second

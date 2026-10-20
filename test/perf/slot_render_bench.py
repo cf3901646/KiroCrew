@@ -70,7 +70,7 @@ def main():
     original_key = cu._display_redaction_cache_key
     current_suffix = b""
 
-    def hoisted_key(text):
+    def hoisted_key(text, *_):
         raw = text.encode("utf-8", errors="surrogatepass")
         digest = hmac.new(cu._DISPLAY_REDACTION_SALT, raw + current_suffix, hashlib.sha256).digest()
         return (digest, len(raw)), len(raw)
