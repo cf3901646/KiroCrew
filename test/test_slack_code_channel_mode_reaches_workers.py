@@ -431,3 +431,33 @@ def test_a_claimed_card_rejected_meanwhile_says_so(
     card = asyncio.run(go())
     mine = [u for u in relay.slack.updates if u[1] == card.ts]
     assert len(mine) == 1 and mine[0][2] == wa.ANSWERED_ELSEWHERE["rejected"]
+
+
+def test_a_colon_prefixed_warning_title_stays() -> None:
+    from kiro_crew.slack.format import title_restates_command
+
+    assert title_restates_command("Running: git status", "git status")
+    assert title_restates_command("Running: git log --one…", "git log --oneline -5")
+    assert not title_restates_command("WARNING - production action: git status", "git status")
+    assert not title_restates_command("Deploy: git status", "git status")
+
+
+def test_an_origin_card_rejected_during_its_grant_is_settled(
+    relay: Any, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    """Channel Trust commits, then the worker's own prompt is rejected mid-grant."""
+    holder: dict[str, Any] = {}
+    # 1 = the channel's grant, 2 = the worker's
+    _during_grant(relay, monkeypatch, 2, lambda: holder["fut"].set_result("rejected"))
+
+    async def go() -> Any:
+        card, fut = await _run_relay(relay)
+        holder["fut"] = fut
+        assert await wa.handle_click(relay.orch, _click(OWNER, card, wa.TRUST_ACTION_ID))
+        await wa.finish(_done(card), fut.result(), deny_cause="", host_ended=False)
+        return card
+
+    card = asyncio.run(go())
+    mine = [u for u in relay.slack.updates if u[1] == card.ts]
+    assert mine and mine[-1][2] == wa.ANSWERED_ELSEWHERE["rejected"]
+    assert all(b.get("type") != "actions" for b in mine[-1][3])

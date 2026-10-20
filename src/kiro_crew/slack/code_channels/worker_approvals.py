@@ -164,9 +164,15 @@ async def settle_claimed(
     the card whose click asked: that click writes its text.
     """
     for card in cards:
-        if granted and f"{card.channel}:{card.ts}" == skip:
-            continue
         fut = card.future
+        if (
+            granted
+            and f"{card.channel}:{card.ts}" == skip
+            and fut.done()
+            and not fut.cancelled()
+            and str(fut.result()).startswith("approved")
+        ):
+            continue  # approved by this grant: the click that asked writes it
         if not fut.done():
             card.answered = False
             continue

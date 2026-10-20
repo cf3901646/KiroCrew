@@ -291,10 +291,12 @@ def title_restates_command(title: str, command: str) -> bool:
     """
     if "UNVERIFIED" in title:
         return False
-    head, sep, tail = title.partition(": ")
-    shown = (tail if sep else head).strip().rstrip("…").rstrip(".").strip()
+    shown = title.strip()
+    if shown.startswith("Running: "):
+        shown = shown[len("Running: ") :]
+    shown = shown.rstrip("…").rstrip(".").strip()
     cmd = command.strip()
-    return bool(shown) and bool(cmd) and (cmd.startswith(shown) or shown == cmd)
+    return bool(shown) and bool(cmd) and cmd.startswith(shown)
 
 
 def build_options_selected_blocks(
