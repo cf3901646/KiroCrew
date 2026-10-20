@@ -12290,6 +12290,7 @@
       "delivery_unconfirmed_pending": "전송이 아직 확인되지 않았습니다. 1분 안에 답변이 오지 않고 위 메시지가 여전히 대기 중이면 복사해서 다시 보내세요. 첫 전송이 실제로 도착했다면 에이전트는 같은 메시지를 두 번 받습니다.",
       "could_not_read_file_reason": "{{path}}을(를) 읽을 수 없습니다 ({{reason}})",
       "screenshot_failed_reason": "스크린샷 실패: {{reason}}",
+      "snip_refused_in_embedded_pane": "이 탭에서는 화면 캡처를 사용할 수 없습니다. 직접 스크린샷을 찍어 첨부하세요.",
       "source_hosts_failed_reason": "GitLab 및 Jira 링크 설정 불러오기 실패: {{reason}}",
       "artifact_reference_failed_reason": "이 채팅에 아티팩트 연결 실패: {{reason}}",
       "http_status": "HTTP {{status}}",

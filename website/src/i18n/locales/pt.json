@@ -12662,6 +12662,7 @@
       "delivery_unconfirmed_pending": "Entrega ainda não confirmada. Se nenhuma resposta chegar em um minuto e a mensagem acima continuar pendente, copie-a e envie-a novamente. Se o primeiro envio tiver chegado, o agente vai recebê-la duas vezes.",
       "could_not_read_file_reason": "Não foi possível ler {{path}} ({{reason}})",
       "screenshot_failed_reason": "Falha na captura de tela: {{reason}}",
+      "snip_refused_in_embedded_pane": "O recorte de tela não está disponível nesta guia. Faça você mesmo uma captura de tela e anexe-a.",
       "source_hosts_failed_reason": "Falha ao carregar as configurações de links do GitLab e do Jira: {{reason}}",
       "artifact_reference_failed_reason": "Falha ao vincular o artefato a este chat: {{reason}}",
       "http_status": "HTTP {{status}}",

@@ -12662,6 +12662,7 @@
       "delivery_unconfirmed_pending": "Envoi pas encore confirmé. Si aucune réponse n'arrive d'ici une minute et que le message ci-dessus est toujours en attente, copie-le et renvoie-le. Si le premier envoi est bien arrivé, l'agent le recevra deux fois.",
       "could_not_read_file_reason": "Impossible de lire {{path}} ({{reason}})",
       "screenshot_failed_reason": "Échec de la capture d’écran : {{reason}}",
+      "snip_refused_in_embedded_pane": "La capture d’écran partielle n’est pas disponible dans cet onglet. Fais toi-même une capture d’écran et joins-la.",
       "source_hosts_failed_reason": "Échec du chargement des paramètres de liens GitLab et Jira : {{reason}}",
       "artifact_reference_failed_reason": "Échec de la liaison de l’artefact à ce chat : {{reason}}",
       "http_status": "HTTP {{status}}",

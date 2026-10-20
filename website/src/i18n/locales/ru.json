@@ -12848,6 +12848,7 @@
       "delivery_unconfirmed_pending": "Доставка пока не подтверждена. Если в течение минуты ответ не придёт, а сообщение выше всё ещё ожидает доставки, скопируй его и отправь снова. Если первая отправка всё же дошла, агент получит его дважды.",
       "could_not_read_file_reason": "Не удалось прочитать {{path}} ({{reason}})",
       "screenshot_failed_reason": "Не удалось сделать снимок экрана: {{reason}}",
+      "snip_refused_in_embedded_pane": "Снимок области экрана недоступен в этой вкладке. Сделай снимок экрана и прикрепи его.",
       "source_hosts_failed_reason": "Не удалось загрузить настройки ссылок GitLab и Jira: {{reason}}",
       "artifact_reference_failed_reason": "Не удалось связать артефакт с этим чатом: {{reason}}",
       "http_status": "HTTP {{status}}",
