@@ -48,15 +48,23 @@ carry a downscale step for this reason
 
 ## Recovery
 
-Dry run first -- it changes nothing and prints what it would rewrite:
+When a turn is refused for this reason the dashboard error card detects the
+provider's many-image dimension rejection (the `image_dimension_wedge` tag,
+classified from the raw error frame in `acp/transport_errors.py` and set only for
+the kiro-cli backend, whose transcript the repair knows how to rewrite) and
+offers **Repair images and resume** instead of Resume. Pressing it `POST`s to
+`/api/chat/slots/{slot}/repair-images`, which stops the slot's kiro-cli process
+(releasing the transcript lock), runs the repair below on the now-idle transcript
+with its `.pre-image-repair.bak` sidecar, re-arms the resume spawn, and re-issues
+the interrupted turn. No turns are lost -- unlike `reset-conversation`, which
+starts a fresh conversation.
+
+The same repair runs from a terminal against the transcript directly:
 
 ```bash
+# Dry run first -- it changes nothing and prints what it would rewrite:
 python -m kiro_crew.session_image_repair ~/.kiro/sessions/cli/<session-id>.jsonl
-```
-
-Then, with the session ENDED (not merely idle -- see below):
-
-```bash
+# Then, with the session ENDED (not merely idle -- see below):
 python -m kiro_crew.session_image_repair --apply ~/.kiro/sessions/cli/<session-id>.jsonl
 ```
 
@@ -88,4 +96,7 @@ Notes on what it does and does not do:
 - An image with no compliant rendition becomes a text marker rather than being
   left in place. Losing one image beats losing every later turn.
 - It is not a sweeper and not a `kirocrew` subcommand, on purpose: it rewrites
-  another tool's data directory, so it stays an explicit operator action.
+  another tool's data directory, so it stays an explicit operator action. The
+  dashboard's "Repair images and resume" button is that explicit operator action
+  -- a human pressing "repair this session" -- so wiring the module behind it
+  does not weaken the constraint; a background sweeper still would.

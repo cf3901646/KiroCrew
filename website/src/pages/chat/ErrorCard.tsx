@@ -1,6 +1,6 @@
 import { memo, useState, type ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { ExternalLink, KeyRound, Loader2, MessageSquarePlus, RotateCw, Settings, ShieldCheck, SlidersHorizontal } from 'lucide-react'
+import { ExternalLink, KeyRound, Loader2, MessageSquarePlus, RotateCw, Settings, ShieldCheck, SlidersHorizontal, Wand2 } from 'lucide-react'
 
 import { ApiError, apiErrorCode } from '../../api/apiError'
 import ErrorNotice from '../../components/ErrorNotice'
@@ -108,6 +108,25 @@ export const isContextOverflow = (m: Pick<ChatMessage, 'kind' | 'meta'>): boolea
 
 /** Where the fresh-session press on a `context_overflow` row stands. */
 export type FreshSessionState = 'idle' | 'pending' | 'done'
+
+/** Row kind the backend stamps on the terminal error the provider's MANY-IMAGE
+ *  PIXEL cap produces (`chat_utils.IMAGE_REPAIR_KIND`): an image already in the
+ *  native history is larger than 2000px, so once the conversation holds many
+ *  images one oversized image rejects the whole turn. A retry or Resume re-sends
+ *  the same history. Unlike a context overflow this is recoverable WITHOUT
+ *  losing turns, so the row offers "Repair images and resume" -- downscale the
+ *  oversized images in place, then re-issue the turn. Same two carriers as
+ *  above. */
+const IMAGE_REPAIR_KIND = 'image_repair'
+
+export const isImageRepair = (m: Pick<ChatMessage, 'kind' | 'meta'>): boolean =>
+  m.kind === IMAGE_REPAIR_KIND || (m.meta as { kind?: string } | undefined)?.kind === IMAGE_REPAIR_KIND
+
+/** Where the repair-images press on an `image_repair` row stands. `pending`
+ *  while the repair + re-issue runs, `done` once the turn was re-issued, and
+ *  `done_not_resumed` when the images were repaired but the turn did not restart
+ *  (a turn raced) — the card then keeps a Resume affordance. */
+export type RepairImagesState = 'idle' | 'pending' | 'done' | 'done_not_resumed'
 
 /** Row kind the backend stamps on a refused app-owned agent turn
  *  (`chat_utils.APP_AGENT_REFUSED_KIND`): the app's agent is shadowed,
@@ -331,6 +350,17 @@ export interface ErrorCardProps {
   /** Where that press stands: `pending` while the request runs, `done` once the
    *  session was reset (the card then says to send the message again). */
   freshSession?: FreshSessionState
+  /**
+   * The fix for the newest `image_repair` row: downscale the oversized images in
+   * this slot's transcript in place, then re-issue the interrupted turn. Offered
+   * INSTEAD of Resume, which would re-send the history whose image overflowed the
+   * provider's many-image pixel cap. Loses no turns, unlike `onFreshSession`.
+   * Omitted on a settled row.
+   */
+  onRepairImages?: () => void
+  /** Where that press stands: `pending` while the repair + re-issue runs, `done`
+   *  once the turn was re-issued against the repaired conversation. */
+  repairImages?: RepairImagesState
 }
 
 // No `shrink-0` and no `truncate`: every action sits in a flex row, and a
@@ -560,6 +590,8 @@ export const ErrorCard = memo(function ErrorCard({
   turnLimitSlot,
   onFreshSession,
   freshSession = 'idle',
+  onRepairImages,
+  repairImages = 'idle',
 }: ErrorCardProps) {
   useLanguageGeneration() // memo() bails out of the provider-level repaint; subscribe directly
   // Swap the gateway's "please retry" wording ONLY on a row that renders the
@@ -678,6 +710,75 @@ export const ErrorCard = memo(function ErrorCard({
     )
   }
   const displayText = chatErrorDisplayText(content, meta)
+  if (onRepairImages) {
+    // An image already in the history is over the provider's many-image pixel
+    // cap, so the turn was refused. The fix downscales the oversized images in
+    // place and re-issues the turn -- no turns lost -- so the prose (the
+    // backend's own sentence) stays first and the button offers the recovery.
+    const pending = repairImages === 'pending'
+    const doneResumed = repairImages === 'done'
+    const doneNotResumed = repairImages === 'done_not_resumed'
+    // Settled means the images were repaired, whether or not the turn restarted:
+    // the card drops its danger colours and the ready line becomes the body.
+    const settled = doneResumed || doneNotResumed
+    const hintKey = doneResumed
+      ? 'pages.chat.errorCard.repair_images_done'
+      : doneNotResumed
+        ? 'pages.chat.errorCard.repair_images_done_not_resumed'
+        : 'pages.chat.errorCard.repair_images_hint'
+    return (
+      <div
+        className={`${settled ? 'bg-bg-elevated ring-border' : 'bg-danger-subtle ring-danger/20'} ring-1 ring-inset forced-colors:border rounded-md self-center w-full max-w-full min-w-0 px-3 py-2 flex flex-col gap-2 animate-scale-in`}
+        data-testid="error-card"
+        data-image-repair="true"
+        data-repair-images={repairImages}
+      >
+        {!settled && (
+          <div className="text-danger text-[13px] leading-5 min-w-0" style={{ overflowWrap: 'anywhere' }}>
+            {withOriginLink(displayText)}
+          </div>
+        )}
+        <div className={`text-[12px] leading-5 ${settled ? 'text-text font-medium' : 'text-muted'}`} data-testid="error-card-repair-images-hint" aria-live="polite">
+          {i18nT(hintKey)}
+        </div>
+        {!settled && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onRepairImages}
+              disabled={pending}
+              className={`${ACTION_BTN} bg-accent text-accent-fg hover:bg-accent-hover`}
+              data-testid="error-card-repair-images"
+            >
+              {pending
+                ? <Loader2 size={12} className="lucide-inline shrink-0 animate-spin" aria-hidden="true" />
+                : <Wand2 size={12} className="lucide-inline shrink-0" aria-hidden="true" />}
+              {i18nT(pending ? 'pages.chat.errorCard.repair_images_pending' : 'pages.chat.errorCard.repair_images')}
+            </button>
+          </div>
+        )}
+        {/* The images were repaired but the turn did not restart (a turn raced):
+            keep a Resume affordance rather than leaving the user with a card that
+            claims work is running when nothing is. */}
+        {doneNotResumed && onContinue && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onContinue}
+              disabled={continuing}
+              className={`${ACTION_BTN} bg-accent text-accent-fg hover:bg-accent-hover`}
+              data-testid="error-card-repair-images-resume"
+            >
+              {continuing
+                ? <Loader2 size={12} className="lucide-inline shrink-0 animate-spin" aria-hidden="true" />
+                : <RotateCw size={12} className="lucide-inline shrink-0" aria-hidden="true" />}
+              {i18nT('pages.chat.errorCard.resume')}
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
   if (onFreshSession) {
     // The conversation is too big for the model: the fix is a fresh session
     // that carries a text recap of this chat. The prose (the backend's own

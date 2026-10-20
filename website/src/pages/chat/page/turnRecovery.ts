@@ -9,7 +9,7 @@ import { useAppSelector } from '../../../store'
 import { selectContinuable, selectTrailingSendUnconfirmed, selectTurnInterrupted } from '../../../store/chatSlice'
 import type { ChatMessage } from '../../../types'
 import { KIRO_SIGN_IN_PATH } from '../../developer/kiroSignInLink'
-import type { CapabilityFix, FreshSessionState } from '../ErrorCard'
+import type { CapabilityFix, FreshSessionState, RepairImagesState } from '../ErrorCard'
 import { newestErrorOwnsRecovery } from '../transcriptRenderers'
 
 interface TurnRecoveryOptions {
@@ -21,7 +21,7 @@ interface TurnRecoveryOptions {
   anchorModelBtn: (rect: DOMRect, trigger?: HTMLElement | null) => void
   setModelDropdown: (open: boolean) => void
   modelPickerReturnsFocusRef: MutableRefObject<boolean>
-  showRefusedPress: (action: 'continue' | 'fresh_session', e: unknown) => void
+  showRefusedPress: (action: 'continue' | 'fresh_session' | 'repair_images', e: unknown) => void
 }
 
 /**
@@ -157,6 +157,40 @@ export function useTurnRecovery({
   // A new turn on the active slot (the user sent again) starts its state over.
   useEffect(() => { if (slotRunning && activeSlot) setSlotFreshSession(activeSlot, 'idle') }, [slotRunning, activeSlot, setSlotFreshSession])
 
+  // Repair-images recovery, per-slot like fresh-session above: the server
+  // downscales the oversized images in the transcript and re-issues the
+  // interrupted turn. It refuses (409) while a turn or sub-agent runs; that
+  // refusal is rendered by the shared refused-press surface.
+  const [repairImagesBySlot, setRepairImagesBySlot] = useState<Readonly<Record<string, RepairImagesState>>>({})
+  const setSlotRepairImages = useCallback((slot: string, state: RepairImagesState) => {
+    setRepairImagesBySlot(prev => {
+      if ((prev[slot] ?? 'idle') === state) return prev
+      const next = { ...prev }
+      if (state === 'idle') delete next[slot]
+      else next[slot] = state
+      return next
+    })
+  }, [])
+  const repairImages: RepairImagesState = (activeSlot && repairImagesBySlot[activeSlot]) || 'idle'
+  const handleRepairImages = useCallback(() => {
+    if (!activeSlot || repairImages !== 'idle' || slotRunning) return
+    const slot = activeSlot
+    setSlotRepairImages(slot, 'pending')
+    api.repairImages(slot).then(
+      (res) => {
+        // The server repaired the transcript but may not have re-issued the
+        // turn (a turn started racing: resumed=false). Say so and keep a Resume
+        // affordance, rather than claiming the reply is running when it is not.
+        setSlotRepairImages(slot, res.resumed ? 'done' : 'done_not_resumed')
+      },
+      (e: unknown) => {
+        showRefusedPress('repair_images', e)
+        setSlotRepairImages(slot, 'idle')
+      },
+    )
+  }, [activeSlot, repairImages, slotRunning, showRefusedPress, setSlotRepairImages])
+  useEffect(() => { if (slotRunning && activeSlot) setSlotRepairImages(activeSlot, 'idle') }, [slotRunning, activeSlot, setSlotRepairImages])
+
   // (The newest-error index that gates the Continue button is derived inside
   // the shared row set from the transcript it is handed -- see
   // transcriptRenderers.tsx `lastErrorIndex`.)
@@ -165,5 +199,6 @@ export function useTurnRecovery({
     openModelPickerFromError, openDefaultModelSetting, openKiroSignIn, openMemberCapabilities, openTurnLimitSetting,
     cardOwnsRecovery,
     freshSession, handleFreshSession,
+    repairImages, handleRepairImages,
   }
 }
