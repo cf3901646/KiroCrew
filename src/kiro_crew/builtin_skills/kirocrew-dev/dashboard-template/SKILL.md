@@ -182,6 +182,11 @@ The frame, as `CrewDynamicDashboard.tsx` and `widgetSrcdoc.ts` build it:
   key press in that frame, and only for a URL matching `PR_URL_RE`, a
   `https://github.com/<owner>/<repo>/pull/<n>` page. Anything else drops, so post it
   from a click handler, never on a timer.
+- A page that draws a worker card may ask the host to open that worker's session with
+  `parent.postMessage({ type: 'kirocrew-dashboard:open-session', item_id: id }, '*')`
+  (`useFrameOpenSession`). Send the item id only: the host reads the dashboard from the
+  frame, the gateway finds the worker, and the session key never comes back to the page.
+  `id` must match `^it_[0-9a-f]{8}$`; same gesture rule as `open`.
 
 Script and buttons are for the built-in directory templates. A scaffolded page above
 stays inert, so its motion is CSS only and it links nowhere.

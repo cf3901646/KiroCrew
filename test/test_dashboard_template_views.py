@@ -954,3 +954,53 @@ def test_a_re_render_gives_focus_back_to_the_rebuilt_fold_button(
     assert make_fn, "foldControl is gone"
     records = "foldButtons[stateKey] = btn" in make_fn.group(1)
     assert records, "foldControl does not record its button, so render cannot find it again"
+
+
+def test_the_open_session_message_carries_exactly_a_type_and_an_item_id(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """The page names no board, slot or dashboard: the host takes those from the frame.
+
+    The board alias is minted per render, so sending it would only invite a wrong
+    lookup; a slot key is the one thing this page must never hold.
+    """
+    _, page = pages["org-chart"]
+    posts = re.findall(r"parent\.postMessage\((\{.*?\}), '\*'\)", page, re.S)
+    assert posts, "the page no longer posts anything to its host"
+    opens = [p for p in posts if "open-session" in p]
+    assert len(opens) == 1, "expected exactly one open-session post"
+    keys = re.findall(r"[{,]\s*(\w+):", opens[0])
+    assert keys == ["type", "item_id"], f"open-session carries {keys}, not just a type and item_id"
+    assert "'kirocrew-dashboard:open-session'" in opens[0]
+    body = opens[0].replace("'kirocrew-dashboard:open-session'", "")
+    assert "slot" not in body and "board" not in body
+
+
+def test_each_card_with_a_worker_gets_one_real_open_session_button(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    """A real button gets Tab, Enter and Space for free; the card itself is not a click target."""
+    _, page = pages["org-chart"]
+    card = re.search(r"function drawCard\([^)]*\) \{(.*?)\n    \}\n", page, re.S)
+    assert card, "drawCard is gone"
+    source = card.group(1)
+    assert "el('button', 'oc-open', i18n('open_session'))" in source
+    assert "openBtn.title = i18n('open_session_title')" in source, "the button names no destination"
+    assert "openBtn.type = 'button'" in source
+    assert "openSession(itemId)" in source
+    # Nothing to open without an item id or a bound worker: no button is drawn.
+    assert "if (itemId && row.worker !== null)" in source
+    assert ".oc-open:focus-visible" in page, "keyboard focus on the button is invisible"
+    assert (
+        "addEventListener('click'" not in source.split("var keys")[0]
+    ), "the card body must not be clickable; most of its text is meant to be selected"
+
+
+def test_the_open_session_label_is_in_both_page_languages(
+    pages: dict[str, tuple[Any, str]],
+) -> None:
+    _, page = pages["org-chart"]
+    assert page.count("open_session:") == 2, "open_session is not declared in en and zh-CN"
+    assert (
+        page.count("open_session_title:") == 2
+    ), "open_session_title is not declared in en and zh-CN"

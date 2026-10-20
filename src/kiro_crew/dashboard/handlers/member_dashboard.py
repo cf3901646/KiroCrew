@@ -81,19 +81,28 @@ def _name_unsafe(name: str) -> bool:
 async def _resolve(request: web.Request) -> tuple[str, str] | web.Response:
     """``(slug, member)`` for this request, or the refusal to return instead.
 
-    The four questions the sibling member routes ask, in their order: is the slug a
-    slug, is the member name one that can reach a model, does that name derive THIS
-    slug and exist, and is it the only name that does.
+    The app-caller gate, then :func:`resolve_names` on the path's slug and the query's
+    member.
     """
     denied = await _deny_app_caller(request, "members.dashboard")
     if denied is not None:
         return denied
-    slug = request.match_info.get("slug", "")
+    return await resolve_names(request.match_info.get("slug", ""), request.query.get("member", ""))
+
+
+async def resolve_names(slug: str, member: str) -> tuple[str, str] | web.Response:
+    """``(slug, canonical member)`` for a dashboard named by *slug* and *member*, or the refusal.
+
+    The four questions the sibling member routes ask, in their order: is the slug a
+    slug, is the member name one that can reach a model, does that name derive THIS
+    slug and exist, and is it the only name that does. Request-free, so a route that is
+    handed the pair in a body (``crew-board`` ``open``) asks exactly what the dashboard's
+    own read asks.
+    """
     try:
         members_mod.validate_slug(slug)
     except MemberSlugError:
         return _bad("invalid_member_slug", "invalid member slug")
-    member = request.query.get("member", "")
     if not members_mod.is_dispatchable_member_name(member):
         return _bad("missing_member", "member query parameter required")
     cfg = await asyncio.to_thread(KiroCrewConfig.load)
