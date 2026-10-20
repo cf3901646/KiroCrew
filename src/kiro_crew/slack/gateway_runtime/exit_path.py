@@ -350,6 +350,23 @@ def _install_shutdown_signal_handlers(self: GatewayOrchestrator) -> None:
                 eventlog_hooks.drain_for_shutdown()
             except Exception:
                 pass  # force exit must never be blocked by bookkeeping
+            # os._exit skips atexit, so the SEL writer thread's own drain hook
+            # never runs — the audit events recorded while the gateway was
+            # shutting down, the ones an investigator reads first, would be
+            # dropped. Drain them here, BEFORE the gateway.log tail below:
+            # draining gateway.log first stops its listener, and a SEL
+            # write-failure line would then land in a dead queue with no trace.
+            # Synchronous because a signal handler cannot await, and bounded so
+            # a wedged writer (full disk, unreachable sink) delays this exit by
+            # at most the timeout rather than holding it. flush_audit_queue
+            # drains only an existing singleton — it never creates a trust root
+            # on the way out.
+            try:
+                from kiro_crew.sel import flush_audit_queue
+
+                flush_audit_queue(timeout=2.0)
+            except Exception:
+                pass  # force exit must never be blocked by auditing
             # os._exit skips atexit, so the log queue's drain hook never
             # runs — flush the queued gateway.log tail here, bounded so a
             # wedged disk cannot hang the force exit.

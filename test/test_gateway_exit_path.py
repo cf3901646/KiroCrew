@@ -3,9 +3,11 @@
 ``_install_shutdown_signal_handlers`` puts one handler on SIGINT and SIGTERM. The
 first signal cancels any wheel apply in flight and sets the shared shutdown event;
 the second force-exits after reaping orphaned sessions and draining the member
-event log and the ``gateway.log`` queue, none of which may stop the exit by
-raising. These tests capture the installed handler and drive each path with
-every effect replaced. ``_shutdown_and_exit`` runs every drain and exits once even
+event log, the SEL audit queue and the ``gateway.log`` queue, none of which may
+stop the exit by raising. The SEL drain runs BEFORE the ``gateway.log`` drain, so
+a SEL write-failure line still reaches a live listener. These tests capture the
+installed handler and drive each path with every effect replaced.
+``_shutdown_and_exit`` runs every drain and exits once even
 when the graceful teardown and the drains fail; ``os._exit`` is replaced, so the
 test process never exits.
 """
@@ -25,6 +27,7 @@ import pytest
 
 from kiro_crew import cli as cli_mod
 from kiro_crew import eventlog_hooks
+from kiro_crew import sel as sel_mod
 from kiro_crew import session as session_mod
 from kiro_crew import skill_usage
 from kiro_crew.slack import gateway as gw
@@ -37,12 +40,14 @@ def seams(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
         event=MagicMock(name="shutdown_event"),
         cleanup=MagicMock(name="cleanup_orphaned_sessions"),
         drain=MagicMock(name="drain_for_shutdown"),
+        flush_sel=MagicMock(name="flush_audit_queue"),
         stop_log=MagicMock(name="_stop_log_queue_listener"),
     )
     monkeypatch.setattr(gw, "platform_compat", found.compat)
     monkeypatch.setattr(gw, "shutdown_event", found.event)
     monkeypatch.setattr(session_mod, "cleanup_orphaned_sessions", found.cleanup)
     monkeypatch.setattr(eventlog_hooks, "drain_for_shutdown", found.drain)
+    monkeypatch.setattr(sel_mod, "flush_audit_queue", found.flush_sel)
     monkeypatch.setattr(cli_mod, "_stop_log_queue_listener", found.stop_log)
     return found
 
@@ -86,20 +91,40 @@ async def test_a_second_signal_drains_and_force_exits(monkeypatch, seams, capsys
     assert seams.compat.cancel_wheel_applies_in_flight.call_count == 2
     seams.cleanup.assert_called_once_with(narrow_with_leaders=False)
     seams.drain.assert_called_once_with()
+    seams.flush_sel.assert_called_once_with(timeout=2.0)
     seams.stop_log.assert_called_once_with(timeout=2.0)
     seams.compat.hard_exit.assert_called_once_with(0)
     assert "Force exit!" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
+async def test_the_sel_drain_precedes_the_gateway_log_drain(monkeypatch, seams) -> None:
+    """A SEL write failure logs its "dropped N events" line through the
+    gateway.log queue, so the force exit must drain SEL BEFORE stopping that
+    queue's listener -- otherwise the audit-loss line lands in a dead queue with
+    no trace. Recorded on one parent mock so call order is asserted directly."""
+    order = MagicMock()
+    order.attach_mock(seams.flush_sel, "flush_sel")
+    order.attach_mock(seams.stop_log, "stop_log")
+    handlers = _install(monkeypatch)
+
+    handlers[signal.SIGINT]()
+    handlers[signal.SIGINT]()
+
+    assert [c[0] for c in order.mock_calls] == ["flush_sel", "stop_log"]
+
+
+@pytest.mark.asyncio
 async def test_a_failing_drain_never_blocks_the_force_exit(monkeypatch, seams) -> None:
     seams.drain.side_effect = OSError("disk wedged")
+    seams.flush_sel.side_effect = OSError("sel writer wedged")
     seams.stop_log.side_effect = RuntimeError("listener gone")
     handlers = _install(monkeypatch)
 
     handlers[signal.SIGINT]()
     handlers[signal.SIGINT]()
 
+    seams.flush_sel.assert_called_once_with(timeout=2.0)
     seams.compat.hard_exit.assert_called_once_with(0)
 
 

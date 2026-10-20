@@ -228,10 +228,10 @@ class TestEveryGatewayHardExitFlushesTheAuditQueue:
     ``os._exit`` in that module (such as ``exit_after_failed_restart_exec``) is
     still held to the contract.
 
-    The second-signal force exit (``_on_signal`` in ``slack/gateway_runtime/exit_path.py``) is the
-    one KNOWN gap, exempted by name: draining SEL there without blocking the
-    event loop or waiting on a wedged executor needs its own design. Remove the
-    exemption once that path drains.
+    The second-signal force exit (``_on_signal`` in ``slack/gateway_runtime/exit_path.py``)
+    drains SEL with the synchronous ``flush_audit_queue(timeout=...)`` a signal
+    handler can call without awaiting, so it is held to the contract like every
+    other hard exit here.
 
     The check is per-function and does NOT look inside nested functions, so a
     flush in a sibling closure cannot vouch for its parent. It mirrors the
@@ -256,49 +256,15 @@ class TestEveryGatewayHardExitFlushesTheAuditQueue:
     )
     _HELPERS = {"flush_audit_queue", "flush_audit_queue_before_hard_exit"}
 
-    #: The shared ``os._exit`` primitive, and the undrained force exit, exempt
-    #: by name (see the class docstring). A ``module name ->
-    #: {function names}`` map so the exemption cannot leak to a same-named
-    #: function in another scanned module.
-    _EXEMPT = {"platform_compat_runtime.py": {"hard_exit"}, "exit_path.py": {"_on_signal"}}
-
-    @staticmethod
-    def _has_inline_drain(fn):
-        """True when ``fn``'s own body contains the ``sel().flush`` expression.
-
-        The restart path drains the queue that way instead of through the
-        helper. It is a different spelling of the same contract, not a
-        violation, so the ratchet accepts it -- but it is matched
-        STRUCTURALLY, not as a co-occurrence of the names ``sel`` and
-        ``flush``. ``_dispatch``-sized functions mention both incidentally, and
-        a name-pair rule would hand them a pass they have not earned.
-        """
-        found = False
-
-        class _Walk(ast.NodeVisitor):
-            def visit_FunctionDef(self, node):  # nested def: not fn's own body
-                if node is fn:
-                    self.generic_visit(node)
-
-            visit_AsyncFunctionDef = visit_FunctionDef
-
-            def visit_Attribute(self, node):
-                nonlocal found
-                value = node.value
-                if (
-                    node.attr == "flush"
-                    and isinstance(value, ast.Call)
-                    and isinstance(value.func, ast.Name)
-                    and value.func.id == "sel"
-                ):
-                    found = True
-                self.generic_visit(node)
-
-        _Walk().visit(fn)
-        return found
+    #: The shared ``os._exit`` primitive is exempt by name (see the class
+    #: docstring): it is a sync pass-through a signal handler cannot be made to
+    #: await, so it drains nothing itself and its callers drain before reaching
+    #: it. A ``module name -> {function names}`` map so the exemption cannot
+    #: leak to a same-named function in another scanned module.
+    _EXEMPT = {"platform_compat_runtime.py": {"hard_exit"}}
 
     def _drains(self, fn):
-        return bool(self._own_body_names(fn) & self._HELPERS) or self._has_inline_drain(fn)
+        return bool(self._own_body_names(fn) & self._HELPERS)
 
     @staticmethod
     def _own_body_names(fn):
@@ -419,15 +385,16 @@ class TestSelFlushPrecedesGatewayLogDrain:
     references a gateway.log drain.
     """
 
-    _SEL_DRAINS = {"flush_audit_queue", "flush_audit_queue_before_hard_exit", "sel"}
+    _SEL_DRAINS = {"flush_audit_queue", "flush_audit_queue_before_hard_exit"}
     _LOG_DRAINS = {"_stop_log_queue_listener", "drain_log_queue_before_hard_exit"}
 
     # module path -> function names that drain BOTH sinks before a hard exit.
-    # ``_handle_restart`` drains SEL with the inline ``sel().flush`` spelling,
-    # which the ``sel`` marker in ``_SEL_DRAINS`` catches. The second-signal
-    # force exit does not drain SEL, so it is not listed.
+    # ``_handle_restart`` and the ``_on_signal`` force exit now both route the
+    # SEL drain through the shared helpers in ``_SEL_DRAINS``, the same spelling
+    # the other paths use. The force exit drains synchronously
+    # (``flush_audit_queue``) because a signal handler cannot await.
     _PATHS = {
-        "src/kiro_crew/slack/gateway_runtime/exit_path.py": {"_shutdown_and_exit"},
+        "src/kiro_crew/slack/gateway_runtime/exit_path.py": {"_shutdown_and_exit", "_on_signal"},
         "src/kiro_crew/platform_compat_runtime.py": {"exit_after_failed_restart_exec"},
         "src/kiro_crew/slack/events.py": {"_handle_restart"},
     }
