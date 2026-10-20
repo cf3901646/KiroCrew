@@ -16,6 +16,7 @@ import { ApiError } from '../api/apiError'
 import { renderWithProviders } from './helpers'
 import CrewDynamicDashboard, {
   ACT_MESSAGE_TYPE,
+  SEND_MESSAGE_TYPE,
   DASHBOARD_FALLBACK_REFETCH_MS,
   DATA_MESSAGE_TYPE,
   READY_MESSAGE_TYPE,
@@ -160,6 +161,120 @@ describe('CrewDynamicDashboard', () => {
       data: { type: ACT_MESSAGE_TYPE, text: 'Re-dispatch it' }, source: frame.contentWindow,
     }))
     expect(onAct).toHaveBeenCalledWith('Re-dispatch it')
+  })
+
+  describe('a page\'s send message', () => {
+    const post = (frame: HTMLIFrameElement, text: string) =>
+      window.dispatchEvent(new MessageEvent('message', {
+        data: { type: SEND_MESSAGE_TYPE, text }, source: frame.contentWindow,
+      }))
+    // What `hasGesture` reads: a recent activation AND the page's frame holding focus.
+    const activation = (isActive: boolean) =>
+      Object.defineProperty(navigator, 'userActivation', { value: { isActive }, configurable: true })
+    const focusIn = (frame: HTMLIFrameElement | null) =>
+      vi.spyOn(document, 'activeElement', 'get').mockReturnValue(frame)
+    afterEach(() => { Reflect.deleteProperty(navigator, 'userActivation'); vi.restoreAllMocks() })
+
+    async function mountSend(onSend?: (t: string) => Promise<boolean>) {
+      vi.spyOn(api, 'sessionDashboard').mockResolvedValue(page())
+      const onAct = vi.fn()
+      renderWithProviders(
+        <CrewDynamicDashboard target={{ kind: 'session', slot: 'chat-7' }} displayName="Root" onAct={onAct} onSend={onSend} />,
+      )
+      const frame = (await screen.findByTestId('crew-dashboard-iframe')) as HTMLIFrameElement
+      return { frame, onAct }
+    }
+
+    it('sends on a real click inside the page, from its own frame only, and does not fill the composer', async () => {
+      activation(true)
+      const onSend = vi.fn().mockResolvedValue(true)
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      window.dispatchEvent(new MessageEvent('message', { data: { type: SEND_MESSAGE_TYPE, text: 'nope' }, source: window }))
+      expect(onSend).not.toHaveBeenCalled()
+      post(frame, '  Approve it  ')
+      await waitFor(() => expect(onSend).toHaveBeenCalledWith('Approve it'))
+      expect(onAct).not.toHaveBeenCalled()
+    })
+
+    it('only fills the composer when the click was elsewhere in the window, so the composer or sidebar cannot arm a send', async () => {
+      activation(true)
+      const onSend = vi.fn().mockResolvedValue(true)
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(null)
+      post(frame, 'Approve it')
+      expect(onSend).not.toHaveBeenCalled()
+      expect(onAct).toHaveBeenCalledWith('Approve it')
+    })
+
+    it('only fills the composer when there was no recent click, so a script cannot send', async () => {
+      activation(false)
+      const onSend = vi.fn().mockResolvedValue(true)
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      post(frame, 'Approve it')
+      expect(onSend).not.toHaveBeenCalled()
+      expect(onAct).toHaveBeenCalledWith('Approve it')
+    })
+
+    it('only fills the composer in a browser that has no activation API', async () => {
+      const onSend = vi.fn().mockResolvedValue(true)
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      post(frame, 'Approve it')
+      expect(onSend).not.toHaveBeenCalled()
+      expect(onAct).toHaveBeenCalledWith('Approve it')
+    })
+
+    it('only fills the composer when the host offers no send', async () => {
+      activation(true)
+      const { frame, onAct } = await mountSend(undefined)
+      focusIn(frame)
+      post(frame, 'Approve it')
+      expect(onAct).toHaveBeenCalledWith('Approve it')
+    })
+
+    it('falls back to the composer when the send is refused or throws, and tries the next reply instead of dropping it', async () => {
+      activation(true)
+      const onSend = vi.fn().mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('x')).mockResolvedValueOnce(true)
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      post(frame, 'One')
+      await waitFor(() => expect(onAct).toHaveBeenCalledWith('One'))
+      post(frame, 'Two')
+      await waitFor(() => expect(onAct).toHaveBeenCalledWith('Two'))
+      post(frame, 'Three')
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(3))
+      expect(onAct).toHaveBeenCalledTimes(2)
+    })
+
+    it('drops a second send inside the interval of an accepted one and a send while one is in flight', async () => {
+      activation(true)
+      let release: (v: boolean) => void = () => {}
+      const onSend = vi.fn(() => new Promise<boolean>((r) => { release = r }))
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      post(frame, 'One')
+      post(frame, 'Two')
+      expect(onSend).toHaveBeenCalledTimes(1)
+      release(true)
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1))
+      post(frame, 'Three')
+      expect(onSend).toHaveBeenCalledTimes(1)
+      expect(onAct).not.toHaveBeenCalled()
+    })
+
+    it('refuses the same texts act refuses', async () => {
+      activation(true)
+      const onSend = vi.fn().mockResolvedValue(true)
+      const { frame, onAct } = await mountSend(onSend)
+      focusIn(frame)
+      post(frame, '   ')
+      post(frame, 'a'.repeat(601))
+      post(frame, 'a\u0007b')
+      expect(onSend).not.toHaveBeenCalled()
+      expect(onAct).not.toHaveBeenCalled()
+    })
   })
 
   it('re-reads a session page when the gateway names its slot', async () => {

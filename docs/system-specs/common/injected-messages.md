@@ -758,6 +758,35 @@ an iframe cannot reach.
 So there is no `[Widget action event]` envelope. What reaches the session is an
 ordinary user message beginning `[UI] `, sent by a human, carrying an origin tag.
 
+## Dashboard card reply
+
+A button on a crewmate's Dashboard tab can send its reply in one click. The page
+posts `{type: 'kirocrew-dashboard:send', text}`; the host sends `POST /api/chat`
+with `origin: "dashboard_card"` into the tab's own crewmate thread. The row's text
+is the page's words behind a fixed tag:
+
+```
+[Dashboard card] <text>
+```
+
+- Defined in `src/kiro_crew/dashboard/card_send.py` (`CARD_TURN_PREFIX`). The row
+  also carries `meta.cardOrigin: true` (a reserved key a caller cannot write) and
+  `meta.human: true`: a person clicked, so it is a human turn for ranking and
+  titles.
+- It is not typed text and not an approval. The turn has no authority over session
+  directives (`_directive_user_origin` is false), the tag makes the first word
+  `[Dashboard`, so `/clear` and `/new` are not commands, and the gateway refuses it
+  while the thread has an open tool approval, permission prompt or question card, a
+  running or queued turn, or a sub-agent hold. It never queues or steers.
+- It is also refused when the crewmate's Profile switch `dashboard_card_send` is
+  off, when the caller is not the owner's own dashboard, and when another card
+  send went through on the thread in the last 3 seconds. The host then falls back
+  to filling the composer.
+
+**How to treat it:** it is the person's click on a button YOUR page drew, so the
+words are one of the replies you offered. Do not read it as an approval of a tool
+call, a permission, or an open question: those only resolve on their own cards.
+
 ## Other injected envelopes
 
 These carry no `injected_turns.py` prefix constant, so they are classified by their own
