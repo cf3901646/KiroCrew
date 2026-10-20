@@ -8032,7 +8032,7 @@
       },
       "privacyPanel": {
         "recordMetricsLabel": "Record metrics",
-        "recordMetricsDescription": "Collect performance metrics on this machine.",
+        "recordMetricsDescription": "Collect performance metrics on this machine. On by default.",
         "recordMetricsDescriptionExporting": "Collect performance metrics and send them to the collector configured in config.json.",
         "recordMetricsSaveFailed": "Could not change this setting. Try again.",
         "recordMetricsSaveRefusedEgress": "Recording was not turned on: telemetry.otlp_endpoint is set, so enabling it here would start sending metrics off this machine. Turn it on in config.json instead.",
@@ -9083,7 +9083,7 @@
     "controlsTitle": "Telemetry controls",
     "dataNeverSentBody": "Prompts, responses, files, credentials, hostnames, usernames, or your operating system. Your IP is not stored.",
     "dataNeverSentTitle": "Never sent",
-    "localDataBody": "Usage and context records. Performance metrics are off by default.",
+    "localDataBody": "Usage and context records. Performance metrics are on by default and stay on this device.",
     "localDataTitle": "Stays on your device",
     "notSendingAlreadySentToday": "Today's heartbeat has already been sent.",
     "notSendingAwaitingAck": "Nothing has been sent yet. The first heartbeat waits until you've seen this page.",

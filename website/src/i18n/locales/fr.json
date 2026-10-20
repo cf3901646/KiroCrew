@@ -17314,7 +17314,7 @@
         "custom_sound_option": "{{name}} (le tien)"
       },
       "privacyPanel": {
-        "recordMetricsDescription": "Collecter les métriques de performance sur cette machine.",
+        "recordMetricsDescription": "Collecter des métriques de performance sur cette machine. Activé par défaut.",
         "recordMetricsDescriptionExporting": "Collecter les métriques de performance et les envoyer au collecteur configuré dans config.json.",
         "recordMetricsEnvPinned": "La variable d’environnement {{envVar}} fixe ce réglage — supprime-la de l’environnement pour le modifier ici.",
         "recordMetricsLabel": "Enregistrer les métriques",
@@ -19326,7 +19326,7 @@
     "installReceiptBody": "Après une installation ou mise à jour réussie depuis le catalogue officiel de Kiro Crew, un reçu anonyme est envoyé. Les registres externes, apps locales et apps auto-enregistrées ne sont jamais signalés.",
     "installReceiptFields": "slug de l’app officielle · jeton anonyme par app (non corrélable entre apps) · nouvelle installation/mise à jour · version de Kiro Crew",
     "installReceiptTitle": "Reçus d’installation des apps officielles",
-    "localDataBody": "Journaux d’usage et de contexte. Les métriques de performance sont désactivées par défaut.",
+    "localDataBody": "Journaux d’usage et de contexte. Les métriques de performance sont activées par défaut et restent sur cet appareil.",
     "localDataTitle": "Reste sur ton appareil",
     "notSendingAlreadySentToday": "Le signal du jour a déjà été envoyé.",
     "notSendingAwaitingAck": "Rien n'a encore été envoyé. Le premier signal attend que tu aies vu cette page.",

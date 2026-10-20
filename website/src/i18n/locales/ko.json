@@ -16687,7 +16687,7 @@
       },
       "privacyPanel": {
         "recordMetricsLabel": "메트릭 기록",
-        "recordMetricsDescription": "이 컴퓨터에서 성능 메트릭을 수집합니다.",
+        "recordMetricsDescription": "이 컴퓨터에서 성능 지표를 수집합니다. 기본값은 켜짐입니다.",
         "recordMetricsDescriptionExporting": "성능 메트릭을 수집하고 config.json에 지정된 수집기로 전송합니다.",
         "recordMetricsSaveFailed": "이 설정을 변경할 수 없습니다. 다시 시도하세요.",
         "recordMetricsEnvPinned": "{{envVar}} 환경 변수가 이 설정을 고정하고 있습니다. 여기에서 변경하려면 해제하세요.",
@@ -18758,7 +18758,7 @@
     "installReceiptBody": "Kiro Crew 공식 카탈로그에서 설치 또는 업데이트가 성공하면 익명 영수증 하나가 전송됩니다. 외부 레지스트리, 로컬 앱, 자체 등록된 앱은 보고되지 않습니다.",
     "installReceiptFields": "공식 앱 슬러그 · 앱별 익명 토큰(앱 간 연결 불가) · 신규/업데이트 플래그 · Kiro Crew 버전",
     "installReceiptTitle": "공식 앱 설치 영수증",
-    "localDataBody": "사용 및 컨텍스트 기록. 성능 메트릭은 기본적으로 꺼져 있습니다.",
+    "localDataBody": "사용 및 컨텍스트 기록. 성능 메트릭은 기본적으로 켜져 있으며 이 기기에만 저장됩니다.",
     "localDataTitle": "기기에 보관",
     "notSendingAlreadySentToday": "오늘의 하트비트는 이미 전송되었습니다.",
     "notSendingAwaitingAck": "아직 전송된 것이 없습니다. 첫 하트비트는 이 페이지를 확인할 때까지 대기합니다.",

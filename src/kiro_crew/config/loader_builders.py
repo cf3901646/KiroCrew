@@ -871,8 +871,14 @@ def _build_session_config(session_data: dict) -> SessionConfig:
 
 def _build_telemetry_config(telemetry_data: dict) -> TelemetryConfig:
     section = _sections.SectionReader(TelemetryConfig, telemetry_data)
+    enabled = bool(section.get("enabled"))
+    # An install that turned the heartbeat off and never set ``enabled`` has
+    # already said no to telemetry, so recording follows it instead of the
+    # field default. A rule at load time: no config file is rewritten.
+    if "enabled" not in telemetry_data and telemetry_data.get("beacon_enabled") is False:
+        enabled = False
     return TelemetryConfig(
-        enabled=bool(section.get("enabled")),
+        enabled=enabled,
         local_dir=str(section.get("local_dir")),
         export_interval_seconds=section.read("export_interval_seconds", _safe_int),
         retention_days=section.read("retention_days", _safe_int),

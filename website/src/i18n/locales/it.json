@@ -17315,7 +17315,7 @@
       },
       "privacyPanel": {
         "recordMetricsLabel": "Registra le metriche",
-        "recordMetricsDescription": "Raccogli le metriche di prestazione su questa macchina.",
+        "recordMetricsDescription": "Raccogli metriche sulle prestazioni su questo computer. Attivo per impostazione predefinita.",
         "recordMetricsDescriptionExporting": "Raccogli le metriche di prestazione e inviale al collector configurato nel file config.json.",
         "recordMetricsSaveFailed": "Impossibile modificare questa impostazione. Riprova.",
         "recordMetricsSaveRefusedEgress": "Registrazione non attivata: telemetry.otlp_endpoint è impostato, quindi attivarla qui inizierebbe a inviare le metriche fuori da questa macchina. Attivala invece nel file config.json.",
@@ -19326,7 +19326,7 @@
     "installReceiptBody": "Dopo un’installazione o un aggiornamento riuscito dal catalogo ufficiale di Kiro Crew, viene inviata una ricevuta anonima. Registri esterni, app locali e app autoregistrate non vengono mai segnalati.",
     "installReceiptFields": "slug dell’app ufficiale · token anonimo per app (non collegabile tra app) · nuova installazione/aggiornamento · versione di Kiro Crew",
     "installReceiptTitle": "Ricevute di installazione delle app ufficiali",
-    "localDataBody": "Registri di utilizzo e contesto. Le metriche di prestazione sono disattivate per impostazione predefinita.",
+    "localDataBody": "Registri di utilizzo e contesto. Le metriche di prestazione sono attive per impostazione predefinita e restano su questo dispositivo.",
     "localDataTitle": "Resta sul tuo dispositivo",
     "notSendingAlreadySentToday": "Il segnale di oggi è già stato inviato.",
     "notSendingAwaitingAck": "Non è stato ancora inviato nulla. Il primo segnale attende che tu abbia visto questa pagina.",

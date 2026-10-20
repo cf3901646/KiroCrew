@@ -187,7 +187,7 @@ describe('PrivacyPanel metric-recording switch', () => {
     // Wait for the status query to land before asserting on the swap.
     expect(await screen.findByText(/send them to the collector/)).toBeInTheDocument()
     expect(
-      screen.queryByText('Collect performance metrics on this machine.'),
+      screen.queryByText('Collect performance metrics on this machine. On by default.'),
     ).not.toBeInTheDocument()
   })
 

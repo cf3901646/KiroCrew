@@ -16782,7 +16782,7 @@
         "custom_sound_option": "{{name}}（自作）"
       },
       "privacyPanel": {
-        "recordMetricsDescription": "このマシンでパフォーマンスメトリクスを収集します。",
+        "recordMetricsDescription": "このマシンでパフォーマンス指標を収集します。既定でオンです。",
         "recordMetricsDescriptionExporting": "パフォーマンスメトリクスを収集し、config.json で設定されたコレクターに送信します。",
         "recordMetricsEgressOff": "telemetry.otlp_endpoint が設定されているため、記録するとメトリクスがこのマシンの外にも送信されます。それを望む場合は config.json で有効にしてください。",
         "recordMetricsEgressOn": "メトリクスは telemetry.otlp_endpoint のコレクターへ、このマシンの外に送信されています。",
@@ -18758,7 +18758,7 @@
     "installReceiptBody": "Kiro Crew の公式カタログから正常にインストールまたは更新された後、匿名レシートが1つ送信されます。外部レジストリ、ローカルアプリ、自己登録アプリは報告されません。",
     "installReceiptFields": "公式アプリスラッグ · アプリごとの匿名トークン (アプリ間でリンク不可) · 新規/更新フラグ · Kiro Crew バージョン",
     "installReceiptTitle": "公式アプリインストールレシート",
-    "localDataBody": "使用状況とコンテキスト記録。パフォーマンスメトリクスはデフォルトではオフです。",
+    "localDataBody": "使用状況とコンテキスト記録。パフォーマンスメトリクスはデフォルトでオンで、このデバイスに保存されます。",
     "localDataTitle": "デバイスに保持",
     "notSendingAlreadySentToday": "今日のハートビートはすでに送信されました。",
     "notSendingAwaitingAck": "まだ何も送信されていません。最初のハートビートはこのページを確認するまで待機します。",

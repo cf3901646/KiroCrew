@@ -17048,7 +17048,7 @@
         "custom_sound_option": "{{name}} (eigener)"
       },
       "privacyPanel": {
-        "recordMetricsDescription": "Leistungsmetriken auf diesem Rechner erfassen.",
+        "recordMetricsDescription": "Leistungsmetriken auf diesem Rechner erfassen. Standardmäßig aktiviert.",
         "recordMetricsDescriptionExporting": "Leistungsmetriken erfassen und an den in config.json konfigurierten Collector senden.",
         "recordMetricsEnvPinned": "Die Umgebungsvariable {{envVar}} legt diese Einstellung fest — entferne sie aus der Umgebung, um sie hier zu ändern.",
         "recordMetricsLabel": "Metriken aufzeichnen",
@@ -19042,7 +19042,7 @@
     "installReceiptBody": "Nach einer erfolgreichen Installation oder Aktualisierung aus dem offiziellen Kiro-Crew-Katalog wird ein anonymer Beleg gesendet. Externe Register, lokale Apps und selbst registrierte Apps werden nie gemeldet.",
     "installReceiptFields": "Offizieller App-Slug · anonymer Token pro App (nicht appübergreifend verknüpfbar) · Neuinstallation/Aktualisierung · Kiro-Crew-Version",
     "installReceiptTitle": "Installationsbelege für offizielle Apps",
-    "localDataBody": "Nutzungs- und Kontextdaten. Leistungsmetriken sind standardmäßig aus.",
+    "localDataBody": "Nutzungs- und Kontextdaten. Leistungsmetriken sind standardmäßig aktiviert und bleiben auf diesem Gerät.",
     "localDataTitle": "Bleibt auf deinem Gerät",
     "notSendingAlreadySentToday": "Das Signal von heute wurde bereits gesendet.",
     "notSendingAwaitingAck": "Es wurde noch nichts gesendet. Das erste Signal wartet, bis du diese Seite gesehen hast.",

@@ -21,7 +21,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from kiro_crew.beacon import PRIVACY_NOTICE_VERSION
 from kiro_crew.config.loader import KiroCrewConfig, TelemetryConfig
+from kiro_crew.config.sections import DashboardConfig
 from kiro_crew.metrics.provider import get_recorder, reset_for_testing
 from kiro_crew.platform import build_default_context
 from kiro_crew.platform.context import (
@@ -35,7 +37,13 @@ ENDPOINT = "https://collector.example.internal:4318/v1/metrics"
 
 
 def _patch_config(monkeypatch, **tel_kwargs):
-    fake = KiroCrewConfig(telemetry=TelemetryConfig(**tel_kwargs))
+    # The current privacy notice acknowledged, so a configured export destination
+    # is attached: recording on by default is not consent to export
+    # (``provider.outbound_consented``), and these tests are about the readers.
+    fake = KiroCrewConfig(
+        telemetry=TelemetryConfig(**tel_kwargs),
+        dashboard=DashboardConfig(privacy_ack_version=PRIVACY_NOTICE_VERSION),
+    )
     monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls: fake))
     monkeypatch.delenv("KIROCREW_TELEMETRY", raising=False)
 

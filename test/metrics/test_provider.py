@@ -7,7 +7,9 @@ import pytest
 from _clock_isolation import assert_clock_is_private
 
 import kiro_crew.metrics.provider as _provider
+from kiro_crew.beacon import PRIVACY_NOTICE_VERSION
 from kiro_crew.config.loader import KiroCrewConfig, TelemetryConfig
+from kiro_crew.config.sections import DashboardConfig
 from kiro_crew.metrics.provider import MetricsRecorder, get_recorder, reset_for_testing
 from kiro_crew.metrics.provider import shutdown as provider_shutdown
 from kiro_crew.testing.clock import ManualClock
@@ -43,7 +45,13 @@ def test_another_thread_keeps_the_real_sleep_and_clock(monkeypatch):
 
 
 def _patch_config(monkeypatch, **tel_kwargs):
-    fake = KiroCrewConfig(telemetry=TelemetryConfig(**tel_kwargs))
+    # The current privacy notice acknowledged, so a configured export destination
+    # is attached: recording on by default is not consent to export
+    # (``provider.outbound_consented``), and these tests are about the readers.
+    fake = KiroCrewConfig(
+        telemetry=TelemetryConfig(**tel_kwargs),
+        dashboard=DashboardConfig(privacy_ack_version=PRIVACY_NOTICE_VERSION),
+    )
     monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls: fake))
     # Keep the consent gate deterministic: a stray KIROCREW_TELEMETRY in the
     # ambient env must not flip these tests. Individual env-var tests re-set it.
@@ -375,12 +383,12 @@ def test_otlp_constructor_failure_never_logs_endpoint(monkeypatch, caplog):
 
 
 def test_retention_config_defaults():
-    """Retention caps default off so upgrades never delete existing shards."""
+    """Recording is on by default, so the disk caps are on by default too."""
     from kiro_crew.config.loader import TelemetryConfig
 
     cfg = TelemetryConfig()
-    assert cfg.retention_days == 0
-    assert cfg.max_total_mb == 0
+    assert cfg.retention_days == 30
+    assert cfg.max_total_mb == 100
     # Negative values are clamped to 0 (disabled) rather than pruning everything.
     clamped = TelemetryConfig(retention_days=-5, max_total_mb=-1)
     assert clamped.retention_days == 0

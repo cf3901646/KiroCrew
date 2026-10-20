@@ -17315,7 +17315,7 @@
       },
       "privacyPanel": {
         "recordMetricsLabel": "Registrar métricas",
-        "recordMetricsDescription": "Recopila métricas de rendimiento en esta computadora.",
+        "recordMetricsDescription": "Recopila métricas de rendimiento en este equipo. Activado de forma predeterminada.",
         "recordMetricsDescriptionExporting": "Recopila métricas de rendimiento y las envía al recolector configurado en config.json.",
         "recordMetricsSaveFailed": "No se pudo cambiar este ajuste. Inténtalo de nuevo.",
         "recordMetricsEnvPinned": "La variable de entorno {{envVar}} está fijando este ajuste — quítala del entorno para poder cambiarlo aquí.",
@@ -19326,7 +19326,7 @@
     "installReceiptBody": "Tras una instalación o actualización correcta desde el catálogo oficial de Kiro Crew, se envía un recibo anónimo. Nunca se informan registros externos, apps locales ni apps autorregistradas.",
     "installReceiptFields": "slug de la app oficial · token anónimo por app (no vinculable entre apps) · instalación nueva/actualización · versión de Kiro Crew",
     "installReceiptTitle": "Recibos de instalación de apps oficiales",
-    "localDataBody": "Registros de uso y contexto. Las métricas de rendimiento están desactivadas por defecto.",
+    "localDataBody": "Registros de uso y contexto. Las métricas de rendimiento están activadas por defecto y se quedan en este dispositivo.",
     "localDataTitle": "Se queda en tu dispositivo",
     "notSendingAlreadySentToday": "La señal de hoy ya se envió.",
     "notSendingAwaitingAck": "Todavía no se ha enviado nada. La primera señal espera hasta que hayas visto esta página.",

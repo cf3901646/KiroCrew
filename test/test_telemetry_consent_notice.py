@@ -1,8 +1,9 @@
-"""Usage-data consent: DO_NOT_TRACK, the notice version and the CLI.
+"""Usage-data consent: DO_NOT_TRACK, the notice version, the export gate, the CLI.
 
 These drive the real code paths against real config files under a temporary
-data home: the loader, ``beacon.telemetry_permitted``, ``metrics.provider`` and
-``kirocrew telemetry enable|disable``. Nothing here sends data anywhere.
+data home: the loader, ``beacon.telemetry_permitted``, the recorder build in
+``metrics.provider`` and ``kirocrew telemetry enable|disable``. Nothing here
+sends data anywhere; the export tests stop at whether a reader would be built.
 """
 
 from __future__ import annotations
@@ -15,7 +16,8 @@ import pytest
 
 from kiro_crew import beacon
 from kiro_crew import cli_commands as cc
-from kiro_crew.config.loader import KiroCrewConfig
+from kiro_crew.config.loader import KiroCrewConfig, TelemetryConfig, written_value
+from kiro_crew.config.sections import DashboardConfig
 from kiro_crew.metrics import provider
 
 _ENV_VARS = ("DO_NOT_TRACK", "KIROCREW_TELEMETRY", "KIROCREW_TELEMETRY_DISABLED")
@@ -80,7 +82,25 @@ def test_do_not_track_has_a_reason_code() -> None:
     assert "do_not_track" in beacon.REASONS
 
 
-# -- the notice version --
+# -- load rules --
+
+
+def test_heartbeat_off_and_enabled_unset_loads_as_off(home: Path) -> None:
+    _write_config(home, {"telemetry": {"beacon_enabled": False}})
+    assert KiroCrewConfig.load().telemetry.enabled is False
+
+
+def test_written_enabled_wins_over_the_heartbeat_rule(home: Path) -> None:
+    _write_config(home, {"telemetry": {"beacon_enabled": False, "enabled": True}})
+    tel = KiroCrewConfig.load().telemetry
+    assert (tel.enabled, tel.beacon_enabled) == (True, False)
+
+
+def test_heartbeat_rule_sees_the_overlay(home: Path) -> None:
+    """The overlay merges first, so a heartbeat-off overlay counts too."""
+    _write_config(home, {"telemetry": {}})
+    _write_config(home, {"telemetry": {"beacon_enabled": False}}, "config.local.json")
+    assert KiroCrewConfig.load().telemetry.enabled is False
 
 
 def test_ack_version_defaults_to_zero_without_falling_back(home: Path) -> None:
@@ -95,6 +115,118 @@ def test_ack_version_defaults_to_zero_without_falling_back(home: Path) -> None:
 def test_ack_version_is_coerced_and_clamped(home: Path, raw: object, expected: int) -> None:
     _write_config(home, {"dashboard": {"privacy_ack_version": raw}})
     assert KiroCrewConfig.load().dashboard.privacy_ack_version == expected
+
+
+def test_written_value_reads_the_overlay_first(home: Path) -> None:
+    _write_config(home, {"telemetry": {"enabled": False}})
+    assert written_value("telemetry", "enabled") is False
+    _write_config(home, {"telemetry": {"enabled": True}}, "config.local.json")
+    assert written_value("telemetry", "enabled") is True
+    assert written_value("telemetry", "missing") is None
+
+
+def test_written_value_ignores_a_malformed_file(home: Path) -> None:
+    (home / "config.json").write_text("{not json", encoding="utf-8")
+    assert written_value("telemetry", "enabled") is None
+
+
+# -- the export gate --
+
+
+def _cfg(*, enabled: bool = True, ack: int = 0) -> KiroCrewConfig:
+    return KiroCrewConfig(
+        telemetry=TelemetryConfig(enabled=enabled),
+        dashboard=DashboardConfig(privacy_ack_version=ack),
+    )
+
+
+def test_export_allowed_once_the_current_notice_is_acknowledged(home: Path) -> None:
+    assert provider.outbound_consented(_cfg(ack=beacon.PRIVACY_NOTICE_VERSION)) is True
+
+
+def test_export_allowed_for_an_explicit_env_opt_in(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("KIROCREW_TELEMETRY", "1")
+    assert provider.outbound_consented(_cfg(enabled=False)) is True
+
+
+def test_export_refused_when_recording_is_not_chosen(home: Path) -> None:
+    assert provider.outbound_consented(_cfg(enabled=False)) is False
+
+
+def test_a_recording_default_alone_never_permits_export(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a default of on, only a written ``true`` or the ack lets metrics leave."""
+    monkeypatch.setattr(
+        "kiro_crew.config.fields.field_default",
+        lambda dto, name: True if name == "enabled" else None,
+    )
+    assert provider.outbound_consented(_cfg(enabled=True)) is False
+    _write_config(home, {"telemetry": {"enabled": True}})
+    assert provider.outbound_consented(_cfg(enabled=True)) is True
+
+
+def test_export_refused_when_the_ack_cannot_be_read(home: Path) -> None:
+    class Broken:
+        @property
+        def dashboard(self) -> object:
+            raise RuntimeError("unreadable")
+
+    assert provider.outbound_consented(Broken()) is False  # type: ignore[arg-type]
+
+
+class _Dest:
+    name = "test-collector"
+    endpoint = "http://127.0.0.1:9/v1/metrics"
+    signals = frozenset({"metrics"})
+    session = None
+
+
+def _build_with_destination(monkeypatch: pytest.MonkeyPatch, cfg: KiroCrewConfig) -> list:
+    """Run the real recorder build with one destination; return the readers it asked for."""
+    built: list = []
+    monkeypatch.setattr(KiroCrewConfig, "load", classmethod(lambda cls: cfg))
+    monkeypatch.setattr(provider, "_otlp_destinations", lambda tel: (_Dest(),))
+    monkeypatch.setattr(provider, "_build_otlp_reader", lambda dest, tel: built.append(dest.name))
+    provider.reset_for_testing()
+    try:
+        result = provider._build_recorder()
+        if result.provider is not None:
+            result.provider.shutdown()
+    finally:
+        provider.reset_for_testing()
+    return built
+
+
+def test_build_attaches_no_export_reader_before_the_ack(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(provider, "outbound_consented", lambda cfg: False)
+    assert _build_with_destination(monkeypatch, _cfg(enabled=True)) == []
+
+
+def test_build_attaches_the_export_reader_after_the_ack(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg(enabled=True, ack=beacon.PRIVACY_NOTICE_VERSION)
+    assert _build_with_destination(monkeypatch, cfg) == ["test-collector"]
+
+
+def test_acknowledging_the_notice_rebuilds_the_recorder() -> None:
+    """The ack is half of the export gate, so its write must reach the applier."""
+    original = provider._config_sub
+    provider._config_sub = None
+    try:
+        provider.watch_config()
+        sub = provider._config_sub
+        assert "dashboard.privacy_ack_version" in sub.prefixes  # type: ignore[attr-defined]
+        assert "telemetry" in sub.prefixes  # type: ignore[attr-defined]
+    finally:
+        if provider._config_sub is not None:
+            provider._config_sub.cancel()  # type: ignore[attr-defined]
+        provider._config_sub = original
 
 
 # -- kirocrew telemetry enable|disable|status --
@@ -174,3 +306,22 @@ def test_dashboard_notice_version_matches_the_backend() -> None:
         encoding="utf-8"
     )
     assert f"PRIVACY_NOTICE_VERSION = {beacon.PRIVACY_NOTICE_VERSION}" in source
+
+
+# -- a whole-document save must not invent an opt-in --
+
+
+def test_save_on_a_fresh_install_does_not_write_the_recording_default(home: Path) -> None:
+    """The boot default-config write would otherwise read back as a written opt-in."""
+    KiroCrewConfig().save()
+    stored = _read_config(home)
+    assert "enabled" not in stored.get("telemetry", {})
+    assert written_value("telemetry", "enabled") is None
+    assert provider.outbound_consented(KiroCrewConfig.load()) is False
+
+
+@pytest.mark.parametrize("choice", [True, False])
+def test_save_keeps_a_recording_choice_already_on_disk(home: Path, choice: bool) -> None:
+    _write_config(home, {"telemetry": {"enabled": choice}})
+    KiroCrewConfig.load().save()
+    assert _read_config(home)["telemetry"]["enabled"] is choice
