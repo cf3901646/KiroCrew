@@ -612,6 +612,24 @@ class BackendPool:
         backends.extend(self._exclusive.values())
         return [(b.pid, b.start_id) for b in backends if b.pid is not None]
 
+    def telemetry_rows(self) -> list[tuple[str, Optional[int], int]]:
+        """``(server_name, pid, refcount)`` of every LIVE backend process.
+
+        The same population :meth:`live_backend_identities` reaps -- pooled,
+        draining and connection-private -- so the gauges built on it count every
+        backend process this daemon is holding, and an exclusive backend (one
+        stub, one process) cancels out of "attachments minus processes".
+
+        Safe to call off the event loop (the metric reader's thread): each
+        ``list(...)`` copy is a single C-level iteration under the GIL, so a
+        concurrent add/evict on the loop cannot change a dict mid-copy. A
+        backend observed just as it dies is at worst one sample stale.
+        """
+        backends = list(self._backends.values())
+        backends.extend(e.backend for e in list(self._draining))
+        backends.extend(list(self._exclusive.values()))
+        return [(b.pool_key.server_name, b.pid, int(b.refcount)) for b in backends if b.is_alive]
+
     async def add(
         self,
         key: PoolKey,

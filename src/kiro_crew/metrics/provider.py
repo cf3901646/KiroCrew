@@ -53,7 +53,7 @@ from kiro_crew.platform.context import (
 )
 
 if TYPE_CHECKING:  # real types for annotations; never imported at runtime
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
     from opentelemetry.sdk.metrics import MeterProvider as _MeterProviderT
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader as _ReaderT
@@ -804,6 +804,16 @@ def _build_recorder() -> _Build:
             register_crew_log_health_instruments(meter)
         except Exception:
             logger.warning("crew log health instruments unavailable", exc_info=True)
+        # MCP gateway pool gauges: same consent gate and callback contract, in
+        # their OWN try for the same reason as the sets above. They observe only
+        # in the process that bound a pool (gatewayd); everywhere else the
+        # callbacks return before reading anything, so no series is published.
+        try:
+            from kiro_crew.metrics.mcp_gateway_gauges import register_mcp_gateway_gauges
+
+            register_mcp_gateway_gauges(meter)
+        except Exception:
+            logger.warning("mcp gateway gauges unavailable", exc_info=True)
         return _Build(MetricsRecorder(meter), provider, consent)
     except Exception as exc:
         logger.warning("telemetry init failed; metrics disabled: %s", exc)
@@ -863,11 +873,48 @@ def otlp_egress_active(cfg: "TelemetryConfig") -> bool:
     raised INSIDE an implementation still propagates: only an absent attribute is
     read as no-destinations.
     """
-    provider = current_context().telemetry
+    provider = _telemetry_provider()
     resolve = getattr(provider, "otlp_destinations", None)
     if resolve is None:
         return False
     return bool(_filter_metric_destinations(resolve(cfg)))
+
+
+#: A process that does not install a platform context names where its telemetry
+#: provider comes from here (see :func:`use_telemetry_provider`). ``None`` -- every
+#: process that boots the platform -- reads ``current_context().telemetry``.
+_provider_factory: "Optional[Callable[[], object]]" = None
+_provider_memo: Optional[object] = None
+_provider_lock = threading.Lock()
+
+
+def use_telemetry_provider(factory: "Optional[Callable[[], object]]") -> None:
+    """Resolve OTLP destinations through *factory* instead of the platform context.
+
+    For a process that never runs ``boot_platform`` (the MCP gateway daemon). On a
+    non-standalone profile ``current_context()`` raises there, so without this its
+    metrics never leave the local sink. The factory is called lazily, at most once
+    successfully, and only from a recorder build that already passed the consent
+    gate -- so an off-consent process never composes anything. A factory that
+    raises is retried on the next build and costs only egress, never collection.
+    ``None`` restores the platform-context path.
+    """
+    global _provider_factory, _provider_memo
+    with _provider_lock:
+        _provider_factory = factory
+        _provider_memo = None
+
+
+def _telemetry_provider() -> object:
+    """The telemetry provider whose ``otlp_destinations`` this process honours."""
+    global _provider_memo
+    factory = _provider_factory
+    if factory is None:
+        return current_context().telemetry
+    with _provider_lock:
+        if _provider_memo is None:
+            _provider_memo = factory()
+        return _provider_memo
 
 
 def _filter_metric_destinations(
@@ -905,7 +952,7 @@ def _otlp_destinations(cfg: "TelemetryConfig") -> "tuple[OtlpDestination, ...]":
     """
     try:
         supplied = safe_context_call(
-            lambda: current_context().telemetry.otlp_destinations(cfg),
+            lambda: _telemetry_provider().otlp_destinations(cfg),  # type: ignore[attr-defined]
             # A raising provider contributes NOTHING, but it must not do so
             # quietly: safe_context_call's own log_message is debug-level, and a
             # default install collects WARNING and above, so relying on it alone
@@ -1341,6 +1388,9 @@ def reset_for_testing() -> None:
     _wait_for_in_flight_consent_worker()
     with _lock:
         _ever_built = False
+    # A process-level provider override (a gatewayd entry point run in-process)
+    # is state too; the next test resolves through the platform context again.
+    use_telemetry_provider(None)
 
 
 #: The registered telemetry applier, kept so ``watch_config`` stays idempotent.
