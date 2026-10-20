@@ -300,6 +300,13 @@ KAS_CLI_FLOOR_NOTICE = (
     "Update kiro-cli and restart Kiro Crew to use KAS."
 )
 
+#: The same notice when KAS is only the default (no backend field that names KAS is
+#: stored): the user never chose KAS, so the notice must not say they did.
+KAS_CLI_FLOOR_DEFAULT_NOTICE = (
+    "KAS is the default backend, but {reason}. Kiro Crew is using kiro-cli instead. "
+    "Update kiro-cli and restart Kiro Crew to use KAS."
+)
+
 
 def apply_kas_cli_floor(cfg: "KiroCrewConfig") -> str | None:
     """Fall back to kiro-cli when KAS is configured but this kiro-cli cannot serve it.
@@ -346,8 +353,27 @@ def apply_kas_cli_floor(cfg: "KiroCrewConfig") -> str | None:
     reason = kas_engine_unsupported_reason()
     if reason is None:
         return None
+    # Read before the re-resolve below moves the field off KAS.
+    defaulted = not _kas_was_chosen(agent, ACP_BACKEND_KAS)
     mark_backend_unservable(ACP_BACKEND_KAS, reason)
     agent.acp_backend = resolve_selected_backend(agent.acp_backend)
-    notice = KAS_CLI_FLOOR_NOTICE.format(reason=reason)
+    template = KAS_CLI_FLOOR_DEFAULT_NOTICE if defaulted else KAS_CLI_FLOOR_NOTICE
+    notice = template.format(reason=reason)
     logger.warning(notice)
     return notice
+
+
+def _kas_was_chosen(agent: object, kas: str) -> bool:
+    """Whether a stored backend field names *kas*; an unreadable answer counts as chosen.
+
+    Only picks the notice's wording, so a failure falls back to the older text.
+    """
+    try:
+        from kiro_crew.config.loader import acp_backend_declared, member_acp_backend_declared
+
+        if getattr(agent, "acp_backend", None) == kas and acp_backend_declared():
+            return True
+        return getattr(agent, "member_acp_backend", None) == kas and member_acp_backend_declared()
+    except Exception:
+        logger.debug("backend declared-check failed", exc_info=True)
+        return True

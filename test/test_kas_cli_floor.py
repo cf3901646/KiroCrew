@@ -12,6 +12,7 @@ import asyncio
 import logging
 import threading
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -222,7 +223,7 @@ class TestGatewayBootDoesNotWaitForTheFloor:
 
         monkeypatch.setattr(gateway, "apply_kas_cli_floor", _slow)
         monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
-        cfg = object()
+        cfg: Any = object()
 
         async def _boot():
             task = gateway._start_kas_cli_floor(cfg)
@@ -235,6 +236,36 @@ class TestGatewayBootDoesNotWaitForTheFloor:
         asyncio.run(_boot())
         assert seen == [cfg]
 
+    def test_declaration_documents_are_read_only_off_loop(self, monkeypatch):
+        from kiro_crew.agent_sdk import kas_floor_wait
+        from kiro_crew.config import loader
+        from kiro_crew.slack import gateway
+
+        reads = []
+
+        def _declared():
+            reads.append(threading.get_ident())
+            return False
+
+        monkeypatch.setattr(loader, "acp_backend_declared", _declared)
+        monkeypatch.setattr(loader, "member_acp_backend_declared", _declared)
+        monkeypatch.setattr(gateway, "apply_kas_cli_floor", lambda cfg: None)
+        monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
+        monkeypatch.setattr(kas_floor_wait, "_armed", None)
+
+        async def _boot():
+            loop_thread = threading.get_ident()
+            task = gateway._start_kas_cli_floor(_cfg(KAS, KAS))
+            try:
+                assert reads == [], "boot read a config document before returning"
+                await asyncio.wait_for(task, timeout=30)
+                assert len(reads) == 2
+                assert all(thread != loop_thread for thread in reads)
+            finally:
+                await asyncio.wait_for(task, timeout=30)
+
+        asyncio.run(_boot())
+
     def test_a_failing_floor_is_logged_and_contained(self, monkeypatch, caplog):
         from kiro_crew.slack import gateway
 
@@ -245,8 +276,324 @@ class TestGatewayBootDoesNotWaitForTheFloor:
         monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
 
         async def _boot():
-            await gateway._start_kas_cli_floor(object())
+            await gateway._start_kas_cli_floor(cast(Any, object()))
 
         with caplog.at_level(logging.WARNING):
             asyncio.run(_boot())
         assert "KAS kiro-cli floor check failed" in caplog.text
+
+
+class TestDefaultNoticeWording:
+    """A host that never chose KAS is not told it did."""
+
+    def test_defaulted_kas_is_named_the_default(self, monkeypatch, pinned_cli, kas_selectable):
+        _help(monkeypatch, _OLD_HELP)
+        monkeypatch.setattr(bootstrap, "_kas_was_chosen", lambda agent, kas: False)
+        notice = bootstrap.apply_kas_cli_floor(_cfg())
+        assert notice is not None
+        assert notice.startswith("KAS is the default backend, but ")
+
+    def test_chosen_kas_keeps_the_selected_wording(self, monkeypatch, pinned_cli, kas_selectable):
+        _help(monkeypatch, _OLD_HELP)
+        monkeypatch.setattr(bootstrap, "_kas_was_chosen", lambda agent, kas: True)
+        notice = bootstrap.apply_kas_cli_floor(_cfg())
+        assert notice is not None
+        assert notice.startswith("KAS is selected, but ")
+
+
+class TestSpawnWaitsForADefaultedFloor:
+    """A spawn racing the floor on a defaulted KAS waits for its verdict."""
+
+    @pytest.fixture(autouse=True)
+    def _disarm(self, monkeypatch):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        monkeypatch.setattr(kas_floor_wait, "_armed", None)
+
+    @staticmethod
+    def _gated_floor(monkeypatch, *, declared):
+        """A real floor on an old kiro-cli whose verdict waits on the returned event."""
+        from kiro_crew.config import loader
+        from kiro_crew.slack import gateway
+
+        release = threading.Event()
+
+        def _floor(cfg):
+            release.wait(5)
+            return bootstrap.apply_kas_cli_floor(cfg)
+
+        monkeypatch.setattr(loader, "acp_backend_declared", lambda: declared)
+        monkeypatch.setattr(loader, "member_acp_backend_declared", lambda: declared)
+        monkeypatch.setattr(gateway, "apply_kas_cli_floor", _floor)
+        monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
+        return gateway, release
+
+    @staticmethod
+    async def _spawn(cfg, key="dashboard:chat"):
+        """What a spawn path does: wait at the gate for its role, then pick the backend."""
+        from kiro_crew.agent_sdk.kas_floor_wait import await_kas_floor_verdict
+        from kiro_crew.members import is_member_session_key, select_provider_backend
+
+        await await_kas_floor_verdict(member=is_member_session_key(key))
+        return select_provider_backend(key, cfg.agent.member_acp_backend, cfg.agent.acp_backend)
+
+    def test_spawn_before_the_verdict_waits_and_lands_on_kiro_cli(
+        self, monkeypatch, pinned_cli, kas_selectable
+    ):
+        _help(monkeypatch, _OLD_HELP)
+        gateway, release = self._gated_floor(monkeypatch, declared=False)
+        cfg = _cfg()
+
+        async def _run():
+            floor = gateway._start_kas_cli_floor(cfg)
+            spawn = asyncio.create_task(self._spawn(cfg))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert not spawn.done(), "the spawn went ahead before the floor's verdict"
+            release.set()
+            await floor
+            return await spawn
+
+        assert asyncio.run(_run()) == KIRO
+
+    def test_member_dm_on_a_defaulted_member_backend_waits_and_main_does_not(
+        self, monkeypatch, pinned_cli, kas_selectable
+    ):
+        from kiro_crew.members import DM_SLOT_KEY_PREFIX
+
+        _help(monkeypatch, _OLD_HELP)
+        gateway, release = self._gated_floor(monkeypatch, declared=False)
+        cfg = _cfg(acp_backend=KIRO, member_acp_backend=KAS)
+        dm_key = f"dashboard:{DM_SLOT_KEY_PREFIX}helper"
+
+        async def _run():
+            floor = gateway._start_kas_cli_floor(cfg)
+            member = asyncio.create_task(self._spawn(cfg, dm_key))
+            main = asyncio.create_task(self._spawn(cfg))
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert not member.done(), "the member DM went ahead before the floor's verdict"
+            # The main role runs kiro-cli, so its spawn is not held by the floor.
+            assert main.done()
+            release.set()
+            await floor
+            return main.result(), await member
+
+        assert asyncio.run(_run()) == (KIRO, KIRO)
+
+    @pytest.mark.parametrize("explicit_member", [False, True])
+    def test_explicit_kas_does_not_wait(
+        self, monkeypatch, pinned_cli, kas_selectable, explicit_member
+    ):
+        from kiro_crew.agent_sdk import kas_floor_wait
+        from kiro_crew.config import loader
+        from kiro_crew.members import DM_SLOT_KEY_PREFIX
+        from kiro_crew.slack import gateway
+
+        _help(monkeypatch, _OLD_HELP)
+        # The lost-run bound must expire before the gate can release on timeout.
+        monkeypatch.setattr(kas_floor_wait, "KAS_FLOOR_WAIT_SECS", 60.0)
+        monkeypatch.setattr(gateway, "_KAS_CLI_FLOOR_TASK", None)
+        cfg = _cfg(acp_backend=KAS, member_acp_backend=KAS)
+        release_read = threading.Event()
+        release_probe = threading.Event()
+
+        async def _run():
+            loop = asyncio.get_running_loop()
+            reading = loop.create_future()
+            probing = loop.create_future()
+
+            def _main_declared():
+                loop.call_soon_threadsafe(reading.set_result, None)
+                assert release_read.wait(60), "declaration read was not released"
+                return not explicit_member
+
+            def _floor(cfg):
+                loop.call_soon_threadsafe(probing.set_result, None)
+                assert release_probe.wait(60), "probe was not released"
+                return bootstrap.apply_kas_cli_floor(cfg)
+
+            monkeypatch.setattr(loader, "acp_backend_declared", _main_declared)
+            monkeypatch.setattr(loader, "member_acp_backend_declared", lambda: explicit_member)
+            monkeypatch.setattr(bootstrap, "_kas_was_chosen", lambda agent, kas: True)
+            monkeypatch.setattr(gateway, "apply_kas_cli_floor", _floor)
+            floor = gateway._start_kas_cli_floor(cfg)
+            main = asyncio.create_task(self._spawn(cfg))
+            member = asyncio.create_task(self._spawn(cfg, f"dashboard:{DM_SLOT_KEY_PREFIX}helper"))
+            explicit, defaulted = (member, main) if explicit_member else (main, member)
+            try:
+                await asyncio.wait_for(reading, timeout=30)
+                assert not main.done() and not member.done()
+                release_read.set()
+                await asyncio.wait_for(probing, timeout=30)
+                result = await asyncio.wait_for(explicit, timeout=30)
+                assert not floor.done(), "the explicit spawn waited for the probe"
+                assert not defaulted.done(), "the defaulted role was released with the explicit one"
+                return result
+            finally:
+                release_read.set()
+                release_probe.set()
+                await asyncio.wait_for(floor, timeout=30)
+                await asyncio.wait_for(asyncio.gather(main, member), timeout=30)
+
+        assert asyncio.run(_run()) == KAS
+
+    def test_release_preserves_the_deadline_and_other_role(self):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        async def _run():
+            verdict = asyncio.get_running_loop().create_future()
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=True)
+            armed = kas_floor_wait._armed
+            assert armed is not None
+            main = asyncio.create_task(kas_floor_wait.await_kas_floor_verdict())
+            member = asyncio.create_task(kas_floor_wait.await_kas_floor_verdict(member=True))
+            await asyncio.sleep(0)
+            assert not main.done() and not member.done()
+            try:
+                kas_floor_wait.release_kas_floor_wait(verdict, main=True, member=False)
+                await asyncio.wait_for(main, timeout=30)
+                assert kas_floor_wait._armed is armed
+                assert not member.done()
+                assert not verdict.done()
+                # Releasing an already released role is harmless.
+                kas_floor_wait.release_kas_floor_wait(verdict, main=True, member=False)
+            finally:
+                verdict.set_result(None)
+                await asyncio.wait_for(asyncio.gather(main, member), timeout=30)
+
+        asyncio.run(_run())
+
+    def test_another_floor_cannot_release_the_armed_roles(self):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        async def _run():
+            loop = asyncio.get_running_loop()
+            earlier = loop.create_future()
+            verdict = loop.create_future()
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=True)
+            kas_floor_wait.release_kas_floor_wait(earlier, main=True, member=True)
+            armed = kas_floor_wait._armed
+            assert armed is not None
+            assert armed[2] is not None and not armed[2].done()
+            assert armed[3] is not None and not armed[3].done()
+            verdict.set_result(None)
+            earlier.set_result(None)
+
+        asyncio.run(_run())
+
+    @pytest.mark.parametrize("cancelled", [False, True])
+    def test_a_failed_or_cancelled_verdict_releases_waiters(self, cancelled):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        async def _run():
+            verdict = asyncio.get_running_loop().create_future()
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=True)
+            waiters = [
+                asyncio.create_task(kas_floor_wait.await_kas_floor_verdict(member=member))
+                for member in (False, True)
+            ]
+            await asyncio.sleep(0)
+            assert all(not waiter.done() for waiter in waiters)
+            if cancelled:
+                verdict.cancel()
+            else:
+                verdict.set_exception(RuntimeError("probe failed"))
+                verdict.exception()
+            await asyncio.wait_for(asyncio.gather(*waiters), timeout=30)
+
+        asyncio.run(_run())
+
+    def test_a_foreign_loop_costs_no_wait(self):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        async def _arm():
+            verdict = asyncio.get_running_loop().create_future()
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=True)
+
+        async def _wait():
+            waiter = asyncio.create_task(kas_floor_wait.await_kas_floor_verdict())
+            await asyncio.sleep(0)
+            assert waiter.done()
+
+        asyncio.run(_arm())
+        asyncio.run(_wait())
+
+    def test_a_landed_verdict_costs_no_wait(self):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        async def _run():
+            verdict = asyncio.get_running_loop().create_future()
+            verdict.set_result(None)
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=False)
+            waiter = asyncio.create_task(kas_floor_wait.await_kas_floor_verdict())
+            await asyncio.sleep(0)
+            assert waiter.done()
+
+        asyncio.run(_run())
+
+    def test_the_wait_is_bounded_by_the_probe_timeout(self, monkeypatch):
+        from kiro_crew.agent_sdk import kas_floor_wait
+
+        assert kas_floor_wait.KAS_FLOOR_WAIT_SECS == kiro_cli._KAS_HELP_PROBE_TIMEOUT_SECS
+        monkeypatch.setattr(kas_floor_wait, "KAS_FLOOR_WAIT_SECS", 0.0)
+
+        async def _run():
+            verdict = asyncio.get_running_loop().create_future()
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=False)
+            # Past its deadline: returns at once, and leaves the verdict running.
+            waiter = asyncio.create_task(kas_floor_wait.await_kas_floor_verdict())
+            await asyncio.sleep(0)
+            assert waiter.done(), "the wait outlived its deadline"
+            assert not verdict.done()
+
+        asyncio.run(_run())
+
+
+class TestTaskRunBootstrapWaitsForTheFloor:
+    """The task-run runtime bootstrap is a spawn path too, so it waits at the gate."""
+
+    def test_a_task_run_started_before_the_verdict_lands_on_kiro_cli(
+        self, monkeypatch, pinned_cli, kas_selectable
+    ):
+        from kiro_crew.agent_sdk import kas_floor_wait
+        from kiro_crew.members import select_provider_backend
+        from kiro_crew.session_allocation_parts import companions
+
+        _help(monkeypatch, _OLD_HELP)
+        monkeypatch.setattr(bootstrap, "_kas_was_chosen", lambda agent, kas: False)
+        cfg = _cfg()
+        picked = []
+
+        class _Stop(Exception):
+            pass
+
+        def _factory(key, **_kwargs):
+            picked.append(
+                select_provider_backend(key, cfg.agent.member_acp_backend, cfg.agent.acp_backend)
+            )
+            raise _Stop
+
+        service: Any = SimpleNamespace(
+            _owner=SimpleNamespace(_provider_factory=_factory),
+            _subagent_runtime_locks={},
+            _subagent_runtimes={},
+        )
+
+        async def _run():
+            verdict = asyncio.get_running_loop().create_future()
+            kas_floor_wait.arm_kas_floor_wait(verdict, main=True, member=False)
+            spawn = asyncio.create_task(
+                companions._get_or_bootstrap_run_runtime(service, "task-run:abc")
+            )
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert picked == [], "the task run reached the factory before the floor's verdict"
+            bootstrap.apply_kas_cli_floor(cfg)
+            verdict.set_result(None)
+            with pytest.raises(_Stop):
+                await spawn
+
+        monkeypatch.setattr(kas_floor_wait, "_armed", None)
+        asyncio.run(_run())
+        assert picked == [KIRO]
