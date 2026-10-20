@@ -481,7 +481,12 @@ async def _turn_dispatch_gates(turn: _ChatTurn) -> _Flow | None:
         turn._mirror_thread = _mirror_thread
         if _mirror_thread and _mirror_chan:
             try:
-                if not _is_synthetic:
+                # The echo carries a prompt from ANOTHER surface into the
+                # thread; one the person typed in this Slack conversation is
+                # already there, and quoting it back reads as the bot
+                # parroting them. The placeholder and the answer still post.
+                _typed_in = turn._slack_typed_in
+                if not _is_synthetic and not (_typed_in and _typed_in == _mirror_thread):
                     from kiro_crew.slack.format import (  # circular: slack.format -> dashboard.state -> chat
                         mirror_prompt_echo,
                     )

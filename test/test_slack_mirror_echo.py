@@ -1,6 +1,6 @@
 """The dashboard -> Slack mirror: its prompt echo and its "Thinking…" placeholder.
 
-Two defects a linked thread showed on every mirrored turn:
+Three defects a linked thread showed on mirrored turns:
 
 * the prompt echo escaped every ``<…>`` entity and wrapped the prompt in ``_…_``,
   so a pasted ``<https://…|label>`` link or ``<#C…>`` channel reference arrived as
@@ -10,7 +10,10 @@ Two defects a linked thread showed on every mirrored turn:
 * the mirror's task stream opened with a "Thinking…" line, and a stream only
   appends, so that line sat above Slack's own "Thinking completed" plan header for
   good. The line is now its own message, deleted when the stream, the answer or
-  the turn's end takes over.
+  the turn's end takes over;
+* a prompt typed in the linked Slack thread itself was echoed back into it,
+  quoting the person to themselves. Only a prompt from another surface is
+  echoed now.
 """
 
 from __future__ import annotations
@@ -85,7 +88,10 @@ class _StreamRefusingSlack(_SlackRecorder):
 
 
 async def _linked_turn(
-    events: list[Any], message: str = "hello", slack: _SlackRecorder | None = None
+    events: list[Any],
+    message: str = "hello",
+    slack: _SlackRecorder | None = None,
+    **run_kwargs: Any,
 ) -> _SlackRecorder:
     slack = slack or _SlackRecorder()
 
@@ -93,7 +99,7 @@ async def _linked_turn(
         ctx.state.slack_client = slack
         ctx.state.sessions.set_slack_link("dashboard:chat-1", "thread-1", "C-1")
 
-    await run_turn(TurnScript(events=events, message=message, setup=_linked))
+    await run_turn(TurnScript(events=events, message=message, setup=_linked, run_kwargs=run_kwargs))
     return slack
 
 
@@ -305,3 +311,284 @@ async def test_a_withheld_turn_opens_no_stream_and_still_retires_the_line(
     assert "start_stream" not in names
     assert "append_task" not in names
     assert _surviving_thinking(slack) == []
+
+
+# ── A prompt typed in the Slack conversation is not echoed back into it ──────
+#
+# The echo carries a prompt from ANOTHER surface into the thread. A message the
+# person typed in that same thread is already there, and quoting it back read as
+# the bot parroting them ("> 💬 what's up?" under their own "what's up?").
+
+
+def _echoes(slack: _SlackRecorder) -> list[str]:
+    return [text for _, text in slack.posts() if "💬" in text]
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_typed_in_the_slack_thread_is_not_echoed_back() -> None:
+    # What the linked-thread router passes for a message typed in thread-1.
+    slack = await _linked_turn(
+        [_ANSWER, _DONE],
+        message="what's up?",
+        _directive_channel_origin=True,
+        _slack_typed_in="thread-1",
+    )
+    assert _echoes(slack) == []
+    # The placeholder and the answer still post, and the placeholder goes before
+    # the first answer chunk lands.
+    [thinking] = _thinking_posts(slack)
+    assert _deleted(slack) == [thinking]
+    names = [name for name, _ in slack.calls]
+    [answer_at] = [
+        i
+        for i, (n, a) in enumerate(slack.calls)
+        if n == "post_message" and a["text"] == "the reply"
+    ]
+    assert names.index("delete_message") < answer_at
+    assert _surviving_thinking(slack) == []
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_typed_in_the_dashboard_is_still_echoed() -> None:
+    slack = await _linked_turn([_ANSWER, _DONE], message="what's up?")
+    assert _echoes(slack) == ["> 💬 what's up?"]
+
+
+@pytest.mark.asyncio
+async def test_channel_origin_alone_does_not_silence_the_echo() -> None:
+    # A Telegram / Teams / Discord hand-off is channel-origin too; only the
+    # router's positive mark silences the echo.
+    slack = await _linked_turn(
+        [_ANSWER, _DONE], message="what's up?", _directive_channel_origin=True
+    )
+    assert _echoes(slack) == ["> 💬 what's up?"]
+
+
+@pytest.mark.asyncio
+async def test_a_prompt_typed_in_another_thread_is_still_echoed() -> None:
+    # Queued from thread-0, then the slot was relinked to thread-1: thread-1 has
+    # never seen the prompt.
+    slack = await _linked_turn(
+        [_ANSWER, _DONE],
+        message="what's up?",
+        _directive_channel_origin=True,
+        _slack_typed_in="thread-0",
+    )
+    assert _echoes(slack) == ["> 💬 what's up?"]
+
+
+def _slack_entry(thread: str = "t1") -> dict[str, Any]:
+    from kiro_crew.dashboard.chat_runner import SLACK_TYPED_IN_META_KEY
+
+    return {
+        "_directive_user_origin": True,
+        "_directive_channel_origin": True,
+        "meta": {SLACK_TYPED_IN_META_KEY: thread},
+    }
+
+
+def _dashboard_entry() -> dict[str, Any]:
+    return {"_directive_user_origin": True, "meta": {}}
+
+
+def _handed_off_entry(channel_type: str = "telegram") -> dict[str, Any]:
+    from kiro_crew.dashboard.session_control import channel_recipient_meta
+
+    return {
+        "_directive_user_origin": True,
+        "_directive_channel_origin": True,
+        "meta": channel_recipient_meta(channel_type, "conv-1", "p-1"),
+    }
+
+
+class TestBatchTypedInSlack:
+    def test_entries_the_router_stamped_name_their_thread(self) -> None:
+        from kiro_crew.dashboard.chat_turn.recipient import _batch_typed_in_slack
+
+        assert _batch_typed_in_slack([_slack_entry()]) == "t1"
+        assert _batch_typed_in_slack([_slack_entry(), _slack_entry()]) == "t1"
+
+    def test_nothing_or_an_unstamped_entry_names_none(self) -> None:
+        from kiro_crew.dashboard.chat_turn.recipient import _batch_typed_in_slack
+
+        assert _batch_typed_in_slack([]) == ""
+        assert _batch_typed_in_slack([_dashboard_entry()]) == ""
+        assert _batch_typed_in_slack(["junk"]) == ""
+        # A hand-off, and a channel-origin entry that lost every stamp (a
+        # recovery requeue copies only addresses): echoed, never silenced.
+        assert _batch_typed_in_slack([_handed_off_entry()]) == ""
+        unstamped = {**_handed_off_entry(), "meta": {}}
+        assert _batch_typed_in_slack([unstamped]) == ""
+
+    def test_a_stamp_without_channel_origin_names_none(self) -> None:
+        # A dashboard edit of the queued text clears channel origin: the edited
+        # words are not what Slack shows.
+        from kiro_crew.dashboard.chat_turn.recipient import _batch_typed_in_slack
+
+        edited = {**_slack_entry(), "_directive_channel_origin": False}
+        assert _batch_typed_in_slack([edited]) == ""
+
+    def test_a_merged_batch_with_one_other_entry_keeps_the_echo(self) -> None:
+        # The merged row is channel-origin when ANY entry is, so reading it alone
+        # would drop the dashboard words from the thread; each entry is read.
+        from kiro_crew.dashboard.chat_turn.recipient import _batch_typed_in_slack
+
+        assert _batch_typed_in_slack([_slack_entry(), _dashboard_entry()]) == ""
+        assert _batch_typed_in_slack([_dashboard_entry(), _slack_entry()]) == ""
+        assert _batch_typed_in_slack([_slack_entry(), _handed_off_entry()]) == ""
+        assert _batch_typed_in_slack([_slack_entry("t1"), _slack_entry("t2")]) == ""
+
+
+class TestTheDrainMarksASlackTypedTurn:
+    """``_start_next_queued_turn`` names the thread for router-stamped entries only."""
+
+    @staticmethod
+    def _drain(tmp_path: Any, monkeypatch: pytest.MonkeyPatch, *, merge: bool = False) -> Any:
+        from unittest.mock import MagicMock
+
+        from chat_test_helpers import _make_state
+
+        # Load the facade first: a first import while ``cr._run_chat`` is stubbed
+        # would bind the stub there for the rest of the session.
+        from kiro_crew.dashboard import chat as _chat  # noqa: F401
+        from kiro_crew.dashboard import chat_runner as cr
+
+        state = _make_state(tmp_path)
+        state.subagents = None
+        captured: dict[str, Any] = {}
+
+        def _stub_run_chat(_state: Any, _slot: Any, _prompt: str, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+
+            async def _done() -> None:
+                return None
+
+            return _done()
+
+        def _fake_spawn(_state: Any, _slot: Any, coro: Any) -> Any:
+            coro.close()
+            task = MagicMock()
+            task.done.return_value = True
+            return task
+
+        monkeypatch.setattr(cr, "_run_chat", _stub_run_chat)
+        monkeypatch.setattr(cr, "spawn_guarded_turn", _fake_spawn)
+        if merge:
+            cfg = MagicMock()
+            cfg.load.return_value.dashboard.merge_queued_messages = True
+            monkeypatch.setattr(cr, "KiroCrewConfig", cfg)
+
+        def _busy(key: str) -> Any:
+            slot = state.get_or_create_slot(key)
+            task = MagicMock()
+            task.done.return_value = False
+            slot.task = task
+            return slot
+
+        async def _run(slot: Any) -> dict[str, Any]:
+            captured.clear()
+            slot.task = None
+            assert await cr._start_next_queued_turn(state, slot) is True
+            return dict(captured)
+
+        return state, _busy, _run
+
+    @staticmethod
+    async def _route_busy(state: Any, slot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Queue "what's up?" from thread t1 through the router's real busy arm."""
+        from conftest import MockSlackClient
+        from kiro_crew.slack import handler as h
+
+        monkeypatch.setattr(h, "_owner_id", "U1")
+        monkeypatch.setattr(state, "get_linked_slot", lambda ts: slot, raising=False)
+        monkeypatch.setattr(h, "_dashboard_state", state)
+        assert await h.maybe_route_linked_thread(
+            "what's up?", "t1", "U1", "C1", MockSlackClient(), "t1"
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_message_the_router_queued_runs_marked(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state, busy, run = self._drain(tmp_path, monkeypatch)
+        slot = busy("chat-1")
+        await self._route_busy(state, slot, monkeypatch)
+        kwargs = await run(slot)
+        assert kwargs["_slack_typed_in"] == "t1"
+        # The stamp is queue plumbing: it does not ride into the persisted row.
+        from kiro_crew.dashboard.chat_runner import SLACK_TYPED_IN_META_KEY
+
+        assert SLACK_TYPED_IN_META_KEY not in (kwargs["_current_message"].get("meta") or {})
+
+    @pytest.mark.asyncio
+    async def test_a_queued_dashboard_or_handed_off_message_runs_unmarked(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kiro_crew.dashboard import chat_delivery as cd
+
+        state, busy, run = self._drain(tmp_path, monkeypatch)
+        slot = busy("chat-1")
+        cd.queue_for_next_turn(state, slot, "from the dashboard", directive_user_origin=True)
+        assert "_slack_typed_in" not in await run(slot)
+        slot = busy("chat-2")
+        cd.queue_for_next_turn(
+            state,
+            slot,
+            "from telegram",
+            directive_user_origin=True,
+            directive_channel_origin=True,
+            channel_recipient={
+                "channel_type": "telegram",
+                "conversation_id": "chat-42",
+                "principal": "user-7",
+            },
+        )
+        assert "_slack_typed_in" not in await run(slot)
+
+    @pytest.mark.asyncio
+    async def test_a_merged_slack_and_dashboard_batch_runs_unmarked(
+        self, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from kiro_crew.dashboard import chat_delivery as cd
+
+        state, busy, run = self._drain(tmp_path, monkeypatch, merge=True)
+        slot = busy("chat-1")
+        await self._route_busy(state, slot, monkeypatch)
+        cd.queue_for_next_turn(state, slot, "typed in the dashboard", directive_user_origin=True)
+        kwargs = await run(slot)
+        # Both entries went into this one turn, and it is still echoed.
+        assert kwargs["_directive_channel_origin"] is True
+        assert slot._queue == []
+        assert "_slack_typed_in" not in kwargs
+
+
+class TestTheLinkedThreadRouterMarksAnIdleTurn:
+    @pytest.mark.asyncio
+    async def test_an_idle_slot_runs_a_turn_naming_its_thread(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock
+
+        from conftest import MockSlackClient
+        from kiro_crew.dashboard import chat
+        from kiro_crew.slack import handler as h
+
+        seen: dict[str, Any] = {}
+
+        async def _fake_run_chat(state: Any, slot: Any, text: str, **kwargs: Any) -> None:
+            seen.update(kwargs)
+
+        monkeypatch.setattr(h, "_owner_id", "U1")
+        monkeypatch.setattr(chat, "_run_chat", _fake_run_chat)
+        slot = MagicMock(key="slot-1", running=False, window_pending=False)
+        state = MagicMock()
+        state.get_linked_slot.return_value = slot
+        state._background_tasks = set()
+        monkeypatch.setattr(h, "_dashboard_state", state)
+        routed = await h.maybe_route_linked_thread(
+            "what's up?", "t1", "U1", "C1", MockSlackClient(), "t1"
+        )
+        assert routed is True
+        await slot.task
+        assert seen["_slack_typed_in"] == "t1"
+        assert seen["_directive_channel_origin"] is True

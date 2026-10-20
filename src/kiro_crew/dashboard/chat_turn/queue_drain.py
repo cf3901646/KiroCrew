@@ -53,6 +53,10 @@ if TYPE_CHECKING:
         shutdown_event,
         spawn_guarded_turn,
     )
+    from kiro_crew.dashboard.chat_turn.recipient import (
+        SLACK_TYPED_IN_META_KEY,
+        _batch_typed_in_slack,
+    )
     from kiro_crew.dashboard.chat_turn.recovery import (
         _drop_revoked_replays,
         _forget_swept_replays,
@@ -871,6 +875,9 @@ async def _start_next_queued_turn(
     _possibly_delivered_steer = bool(_drained_meta.pop(STEER_POSSIBLY_DELIVERED_META, False))
     # Queue plumbing for the sub-agent hold only; says nothing about the row.
     _drained_meta.pop(STEER_INTENT_META, None)
+    # Read off the consumed entries themselves (``_batch_typed_in_slack``); the
+    # merged row's union says nothing about each entry, so it does not ride along.
+    _drained_meta.pop(SLACK_TYPED_IN_META_KEY, None)
     # Queue plumbing like the steer mark above, read the way the channel origin is:
     # ANY consumed entry a channel hand-off stamped keeps the merged text content,
     # so a batch cannot smuggle a channel's "/clear" into a command by sitting
@@ -1016,6 +1023,12 @@ async def _start_next_queued_turn(
         )
     if _commands_off:
         _run_kwargs["_commands_off"] = True
+    # Every entry typed in the linked Slack thread: the thread already shows the
+    # text, so the mirror skips its prompt echo. Read per entry (see the helper);
+    # set only when it names a thread, so every other drain's kwargs are unchanged.
+    _typed_in = _batch_typed_in_slack(consumed)
+    if _typed_in:
+        _run_kwargs["_slack_typed_in"] = _typed_in
     # Provenance for the session's log, from the enqueue-time ``kind`` tag — the
     # same unforgeable source ``is_system_injection_item`` classifies on, and for
     # the same reason: the banner these injections wrap their text in is something

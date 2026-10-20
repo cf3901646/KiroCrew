@@ -82,6 +82,7 @@ class _ChatTurn:
     _directive_loop_gen: "int"
     _directive_channel_origin: "bool"
     _commands_off: "bool"
+    _slack_typed_in: "str"
     _turn_actor: "str"
     regenerate_hint: "str"
     _on_consumed: "Callable[[bool], None] | None"
@@ -299,6 +300,7 @@ class _ChatTurn:
         _directive_loop_gen: "int",
         _directive_channel_origin: "bool",
         _commands_off: "bool",
+        _slack_typed_in: "str",
         _turn_actor: "str",
         regenerate_hint: "str",
         _on_consumed: "Callable[[bool], None] | None",
@@ -327,6 +329,7 @@ class _ChatTurn:
         self._directive_loop_gen = _directive_loop_gen
         self._directive_channel_origin = _directive_channel_origin
         self._commands_off = _commands_off
+        self._slack_typed_in = _slack_typed_in
         self._turn_actor = _turn_actor
         self.regenerate_hint = regenerate_hint
         self._on_consumed = _on_consumed

@@ -491,6 +491,10 @@ async def maybe_route_linked_thread(
                 text,
                 _directive_user_origin=True,
                 _directive_channel_origin=True,
+                # Typed in this thread, so the thread already shows it: the
+                # mirror must not echo it back. A queued entry below carries the
+                # same thread in its meta for the drain to read.
+                _slack_typed_in=reply_ts,
             )
         )
         _linked_slot.task = _chat_task
@@ -498,14 +502,20 @@ async def maybe_route_linked_thread(
         _chat_task.add_done_callback(_dashboard_state._background_tasks.discard)  # type: ignore[attr-defined]
     else:
         # circular import: session_control pulls in dashboard modules at module level.
+        from kiro_crew.dashboard.chat_runner import SLACK_TYPED_IN_META_KEY
         from kiro_crew.dashboard.session_control import containment_meta
 
         # Stamp the admission-time containment. A linked slot records
         # linked=True here, so its own channel's queued messages keep draining;
         # only a constraint that appears AFTER this enqueue drops the entry.
+        # The thread it was typed in rides along, so the drain can tell the
+        # mirror not to echo it back into that thread.
         _linked_slot.queue_append(
             text,
-            meta=containment_meta(_dashboard_state, _linked_slot),  # type: ignore[arg-type]
+            meta={
+                **containment_meta(_dashboard_state, _linked_slot),  # type: ignore[arg-type]
+                SLACK_TYPED_IN_META_KEY: reply_ts,
+            },
             directive_user_origin=True,
             directive_channel_origin=True,
         )

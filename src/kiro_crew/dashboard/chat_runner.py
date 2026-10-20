@@ -328,9 +328,11 @@ from kiro_crew.dashboard.chat_turn.queue_drain import (
     subagents_hold_user_messages,
 )
 from kiro_crew.dashboard.chat_turn.recipient import (  # noqa: F401
+    SLACK_TYPED_IN_META_KEY,
     _attested_peer,
     _audit_admission_refusal,
     _authorize_recipient,
+    _batch_typed_in_slack,
     _deliver_cross_surface_reply,
     _deliver_cross_surface_user_message,
     _deliver_linked_slack_message,
@@ -1520,6 +1522,13 @@ async def _run_chat(
     # entry this way; without the switch, a channel's queued "/clear" would be the
     # one queued "/clear" in the system that ran instead of being said.
     _commands_off: bool = False,
+    # The Slack thread ts the prompt was typed in. When it is the thread this slot
+    # mirrors into, the thread already shows the prompt and the mirror's echo is
+    # skipped (the placeholder and the answer still post). Set by the
+    # linked-thread router for a turn it opens, and by the drain when every
+    # consumed entry carries its stamp for one thread; every other caller leaves
+    # it empty and its prompt is echoed as before.
+    _slack_typed_in: str = "",
     # Who caused this turn, from the dispatch that knows -- a consumed queue
     # entry's enqueue-time ``kind`` tag, or an injector calling this runner
     # directly. Recorded in the session's log, so it must not be derivable from
@@ -1561,6 +1570,7 @@ async def _run_chat(
         _directive_loop_gen=_directive_loop_gen,
         _directive_channel_origin=_directive_channel_origin,
         _commands_off=_commands_off,
+        _slack_typed_in=_slack_typed_in,
         _turn_actor=_turn_actor,
         regenerate_hint=regenerate_hint,
         _on_consumed=_on_consumed,

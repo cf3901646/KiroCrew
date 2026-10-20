@@ -1474,9 +1474,12 @@ class TestLinkedThreadRouting:
             *,
             _directive_user_origin,
             _directive_channel_origin,
+            _slack_typed_in,
         ):
             assert _directive_user_origin is True
             assert _directive_channel_origin is True
+            # Typed in this thread, so the mirror must not echo it back here.
+            assert _slack_typed_in == "t1"
             ran.append(text)
 
         monkeypatch.setattr(chat_mod, "_run_chat", _fake_run_chat)

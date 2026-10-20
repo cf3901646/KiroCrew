@@ -734,3 +734,34 @@ def _prepare_mirror_msg(raw_user_message: str) -> str:
     """
     safe, _ = redact_for_display(raw_user_message or "", redact_via_context)
     return safe[:500]
+
+
+#: Queue-entry ``meta`` key the linked-thread router stamps on a message typed in a
+#: linked Slack thread: the thread's ts. Positive evidence only -- an entry without
+#: it (a dashboard send, a peer's, a channel hand-off, a recovery that copied only
+#: the entry's addresses) is echoed as before, so a lost stamp costs at most an
+#: extra echo, never the dashboard's words missing from the thread.
+SLACK_TYPED_IN_META_KEY = "slack_typed_in"
+
+
+def _batch_typed_in_slack(consumed: Any) -> str:
+    """The Slack thread ts EVERY consumed queue entry was typed in, or ``""``.
+
+    Read per entry, never off the merged row: a merged batch is channel-origin
+    when ANY entry is, so the merged row alone cannot say whether a dashboard
+    entry sits behind a Slack one. One entry without the router's stamp, from
+    another thread, or no longer channel-origin (a dashboard edit clears it, and
+    a restored entry never has it) keeps the echo for the whole batch.
+    """
+    if not consumed:
+        return ""
+    threads: set[str] = set()
+    for item in consumed:
+        if not isinstance(item, dict) or item.get("_directive_channel_origin") is not True:
+            return ""
+        meta = item.get("meta")
+        thread = meta.get(SLACK_TYPED_IN_META_KEY) if isinstance(meta, dict) else None
+        if not isinstance(thread, str) or not thread:
+            return ""
+        threads.add(thread)
+    return threads.pop() if len(threads) == 1 else ""
