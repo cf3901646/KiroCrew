@@ -32,7 +32,7 @@ import logging
 import os
 import subprocess
 import time
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable
 
@@ -109,6 +109,8 @@ _REFRESH_FIELDS = (
     "pr_url",
     "pr_state",
     "pr_ci",
+    "pr_title",
+    "resource_hash",
     "bar_hash",
     "diff_hash",
     "view_id",
@@ -135,6 +137,35 @@ _PR_TTL_SETTLED = 900.0
 #: Debounce for refreshes the board's triggers arm (turn starts, approvals,
 #: ledger writes), so a burst of reports costs one publish.
 BOARD_DEBOUNCE_SECS = 3.0
+
+
+@dataclass(frozen=True)
+class BarExtras:
+    """Where the context bar's channel actions and dashboard link come from.
+
+    ``can_open_pr`` is the ``/create-pr`` capability (worktree + GitHub remote +
+    ``gh``); ``dashboard_link`` builds the bound session's dashboard link with no
+    credential in it (BLOCKING).
+    """
+
+    can_open_pr: Callable[[WorkspaceRecord], Awaitable[bool]]
+    dashboard_link: Callable[[str], str]
+
+    @classmethod
+    def live(cls) -> BarExtras:
+        async def _can_open_pr(record: WorkspaceRecord) -> bool:
+            from kiro_crew.slack.code_channels.commands import pr_capability
+
+            target = SimpleNamespace(team_id=record.team_id, channel_id=record.channel_id)
+            ok, _reason = await pr_capability(target)  # type: ignore[arg-type]
+            return ok
+
+        def _dashboard_link(session_key: str) -> str:
+            from kiro_crew.slack.code_channels.board.links import link_builder
+
+            return link_builder()(session_key) if session_key else ""
+
+        return cls(can_open_pr=_can_open_pr, dashboard_link=_dashboard_link)
 
 
 def _audit(operation: str, outcome: str, resources: str, error: str = "") -> None:
@@ -196,6 +227,13 @@ def _turn_started(before: tuple[bool, int] | None, now: tuple[bool, int], observ
 
 def _digest(*parts: object) -> str:
     return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def resource_for(record: WorkspaceRecord) -> dict[str, str] | None:
+    """The ``agent_resource`` the channel's PR gives it (None without a PR)."""
+    from kiro_crew.slack.code_channels.workspace.context_bar import pr_resource
+
+    return pr_resource(record.pr_number, record.pr_url, record.pr_title, record.pr_state)
 
 
 def _redact_bytes(data: bytes) -> bytes:
@@ -392,9 +430,12 @@ class WorkspaceService:
         read_board: BoardReader | None = None,
         publish_board: BoardPublisher | None = None,
         clock: Callable[[], float] | None = None,
+        extras: BarExtras | None = None,
     ) -> None:
         #: Returns the core's ``CodeChannelsClient`` (``None`` before Slack connects).
         self._client = client
+        #: The bar's channel actions and dashboard link (``None``: repo/branch/PR only).
+        self._extras = extras
         self._create_folder = create_folder
         self._watch: asyncio.Future[None] | None = None
         #: Per channel: ``slot key -> (turn running, turn generation)`` at the last
@@ -422,6 +463,8 @@ class WorkspaceService:
         #: The last board each channel published, PR-filled (the bar and the diff
         #: read it between refreshes).
         self._boards: dict[str, BoardSnapshot] = {}
+        #: The keys of the bar each channel last built (what the agent's tool reports).
+        self._published: dict[str, list[str]] = {}
         #: ``(host, repo slug, branch, number) -> (read at, lookup)`` for worker PRs.
         self._worker_prs: dict[tuple[str, str, str, int], tuple[float, PrLookup]] = {}
 
@@ -850,8 +893,15 @@ class WorkspaceService:
         A diff of a large tree and two ``gh`` reads can outlast the core's hook
         timeout, and the turn must not wait on Slack views. One refresh runs per
         channel at a time; a turn ending while one runs queues exactly one rerun,
-        so the last turn's state is always what gets published.
+        so the last turn's state is always what gets published. A turn Slack's
+        own Stop ended publishes nothing: Slack's lifecycle allows no
+        ``agents.conversations.*`` call for the channel until a new turn starts,
+        whose end publishes everything again.
         """
+        from kiro_crew.slack.code_channels.status import is_quiet
+
+        if is_quiet(str(binding.channel_id or "")):
+            return
         self.schedule_refresh(binding)
 
     def schedule_refresh(self, binding: Any, *, delay: float = 0.0) -> None:
@@ -899,6 +949,10 @@ class WorkspaceService:
         while self._tasks:
             await asyncio.gather(*list(self._tasks.values()), return_exceptions=True)
 
+    def published_keys(self, team_id: str, channel_id: str) -> list[str] | None:
+        """The keys of the bar last built for the channel (None before one)."""
+        return self._published.get(f"{team_id}:{channel_id}")
+
     def board(self, team_id: str, channel_id: str) -> BoardSnapshot | None:
         """The channel's last published board (PR-filled), or ``None``."""
         return self._boards.get(f"{team_id}:{channel_id}")
@@ -927,6 +981,10 @@ class WorkspaceService:
         team, channel = str(binding.team_id or ""), str(binding.channel_id or "")
         if not channel or not _gate_open():
             return
+        from kiro_crew.slack.code_channels.status import is_quiet
+
+        if is_quiet(channel):
+            return  # Slack's own Stop: nothing is published until a new turn
         if await asyncio.to_thread(self._store.get, team, channel) is None:
             await self.ensure(binding)
         # The gh, git and Slack work -- the board's ledger read, the worker PR
@@ -954,6 +1012,7 @@ class WorkspaceService:
                 self._boards.pop(key, None)
             await self._publish_bar(record)
             await self._publish_diff(record)
+            await self._publish_resource(record)
             if board is not None and self._publish_board is not None:
                 # The board's pointers live on the channel's surface record,
                 # not this one, so nothing here merges back for it.
@@ -1060,10 +1119,13 @@ class WorkspaceService:
         lookup = await self._find_pr(repo, branch)
         if lookup.status == "found" and lookup.pr is not None:
             pr = lookup.pr
+            same = pr.number == record.pr_number
             record.pr_number, record.pr_url = pr.number, pr.url
             record.pr_state, record.pr_ci = pr.state, pr.ci
+            record.pr_title = pr.title or (record.pr_title if same else "")
         elif lookup.status == "none":
             record.pr_number, record.pr_url, record.pr_state, record.pr_ci = 0, "", "", ""
+            record.pr_title = ""
         else:
             # gh missing or signed out: keep the PR last seen, drop its CI (stale).
             record.pr_ci = ""
@@ -1071,7 +1133,9 @@ class WorkspaceService:
     async def _bar_state(self, record: WorkspaceRecord) -> BarState:
         cwd = self._checkout_dir(record)
         if not cwd:
-            return BarState(folder=record.project_dir)
+            return BarState(
+                folder=record.project_dir, **(await self._bar_extras(record, has_pr=False))
+            )
         branch = await asyncio.to_thread(git_ops.current_branch, cwd)
         if not branch:
             head = await asyncio.to_thread(git_ops.short_head, cwd)
@@ -1079,7 +1143,9 @@ class WorkspaceService:
         repo = parse_remote(await asyncio.to_thread(git_ops.remote_url, cwd))
         pushed = bool(repo) and await asyncio.to_thread(git_ops.has_remote_branch, cwd, branch)
         pr = (
-            PullRequest(record.pr_number, record.pr_url, record.pr_state, record.pr_ci)
+            PullRequest(
+                record.pr_number, record.pr_url, record.pr_state, record.pr_ci, record.pr_title
+            )
             if record.pr_number
             else None
         )
@@ -1090,7 +1156,28 @@ class WorkspaceService:
             branch_pushed=pushed,
             pr=pr,
             board=self._boards.get(record.key),
+            **(await self._bar_extras(record, has_pr=pr is not None)),
         )
+
+    async def _bar_extras(self, record: WorkspaceRecord, *, has_pr: bool) -> dict[str, Any]:
+        """The bar's channel actions and dashboard link (none without :class:`BarExtras`)."""
+        extras = self._extras
+        if extras is None:
+            return {}
+        try:
+            can_open = (not has_pr) and bool(record.worktree) and await extras.can_open_pr(record)
+        except Exception:
+            logger.debug("code channel %s: PR capability unread", record.channel_id)
+            can_open = False
+        try:
+            link = await asyncio.to_thread(extras.dashboard_link, record.session_key)
+        except Exception:
+            link = ""
+        return {
+            "can_open_pr": can_open,
+            "stop": bool(record.session_key),
+            "dashboard_url": link,
+        }
 
     async def _publish_bar(self, record: WorkspaceRecord) -> bool:
         """Publish the bar when it changed; False when a needed write failed."""
@@ -1099,11 +1186,18 @@ class WorkspaceService:
         try:
             state = await self._bar_state(record)
         except git_ops.SandboxUnavailable:
-            state = BarState(folder=record.project_dir)
+            state = BarState(
+                folder=record.project_dir, **(await self._bar_extras(record, has_pr=False))
+            )
         from kiro_crew.slack.code_channels.agent_bar import merge_for_channel
+        from kiro_crew.slack.code_channels.workspace.context_bar import with_dashboard
 
-        # The agent's own items (code_channel_set_context_bar) ride after these.
-        items = await asyncio.to_thread(merge_for_channel, build_items(state), record.channel_id)
+        # The agent's own items (code_channel_set_context_bar) ride after these,
+        # and the dashboard link takes a slot only after them.
+        base = build_items(replace(state, dashboard_url=""))
+        merged = await asyncio.to_thread(merge_for_channel, base, record.channel_id)
+        items = with_dashboard(merged, state.dashboard_url)
+        self._published[record.key] = [str(i.get("key") or "") for i in items]
         digest = _digest(items)
         if digest == record.bar_hash or (not items and not record.bar_hash):
             return True
@@ -1111,6 +1205,25 @@ class WorkspaceService:
             record.bar_hash = digest
             return True
         return False
+
+    async def _publish_resource(self, record: WorkspaceRecord) -> None:
+        """Set the channel's ``agent_resource`` to its pull request, when that changed.
+
+        Sent once a PR exists and again whenever what it shows moves: a new PR
+        number, a renamed PR, or the PR merging or closing. A channel whose PR
+        goes away keeps the last one (Slack documents no way to clear the
+        property; the next PR replaces it).
+        """
+        if record.slack_off:
+            return
+        resource = resource_for(record)
+        if resource is None:
+            return
+        digest = _digest(resource)
+        if digest == record.resource_hash:
+            return
+        if await self._call("set_agent_resource", record, **resource) is not None:
+            record.resource_hash = digest
 
     async def _publish_diff(self, record: WorkspaceRecord) -> None:
         if record.slack_off or not record.worktree or not record.base_sha:
@@ -1126,7 +1239,12 @@ class WorkspaceService:
         if digest == record.diff_hash:
             return
         view_id = await self._call(
-            "set_diff_view", record, content, base_branch=base_label, head_branch=head_label
+            "set_diff_view",
+            record,
+            content,
+            base_branch=base_label,
+            head_branch=head_label,
+            room_for="diff",
         )
         if view_id is not None:
             record.diff_hash = digest
@@ -1220,14 +1338,24 @@ class WorkspaceService:
         base_label = (git_ops.default_branch_name(cwd) if record.base_ref else "") or base[:12]
         return built.content, redact_via_context(base_label), redact_via_context(branch)
 
-    async def _call(self, method: str, record: WorkspaceRecord, *args: Any, **kwargs: Any) -> Any:
+    async def _call(
+        self,
+        method: str,
+        record: WorkspaceRecord,
+        *args: Any,
+        room_for: str = "",
+        **kwargs: Any,
+    ) -> Any:
         """One write through the core's client. Returns its answer, or None when it failed.
 
         The core's client maps Slack's answer to :class:`CodeChannelApiError` and
         hands every refusal to the feature's process latch itself. Here a
         channel-specific refusal (:data:`_CHANNEL_DISABLING_ERRORS`) turns
-        publishing off for this channel and is SEL-recorded; anything else is
-        logged and retried on the next turn, because no digest is advanced.
+        publishing off for this channel, is SEL-recorded and is told to the
+        dashboard once (:mod:`..notices`); anything else is logged and retried on
+        the next turn, because no digest is advanced. A view write (*room_for*:
+        its key) refused at Slack's five-view cap removes the stalest view of
+        ours and is sent once more (:func:`..views.make_room`).
         """
         client = self._client()
         if client is None:
@@ -1236,6 +1364,11 @@ class WorkspaceService:
             answer = await getattr(client, method)(record.channel_id, *args, **kwargs)
         except CodeChannelApiError as exc:
             code = exc.code
+            if code == "too_many_views" and room_for:
+                from kiro_crew.slack.code_channels.views import make_room
+
+                if await make_room(client, record.channel_id, for_key=room_for):
+                    return await self._call(method, record, *args, **kwargs)
         except CodeChannelError as exc:  # refused locally, before it was sent
             logger.warning("code channel %s: %s not sent: %s", record.channel_id, method, exc)
             return None
@@ -1252,6 +1385,9 @@ class WorkspaceService:
             logger.info(
                 "code channel %s: %s refused (%s); publishing off", record.channel_id, method, code
             )
+            from kiro_crew.slack.code_channels.notices import notify_refusal
+
+            await notify_refusal(record.channel_id, code, session_key=record.session_key)
         else:
             logger.warning(
                 "code channel %s: %s failed: %s", record.channel_id, method, code or "error"

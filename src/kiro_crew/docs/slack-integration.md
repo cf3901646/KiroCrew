@@ -287,6 +287,20 @@ exactly as with the switch off, and the page says why under the switch.
   changes and then each worker's commits under its own heading, the context bar lists
   each worker's pull request, and the wrap-up lists what became of each worker. In the
   dashboard the workers sit under the conductor, in the channel's folder.
+  The context bar shows the repository, the branch and the pull request with its tests,
+  then buttons: **Create PR** (while there is no pull request and Kiro Crew can open one;
+  it does what `/create-pr` does) and **Stop** (stops the running turn, as Slack's own
+  Stop button does), and, in a slot nothing else takes, **Open in dashboard** (a plain
+  link, shown when your dashboard has an https address; you need to be signed in to it).
+  A button answers only the people who may use Kiro Crew; anyone else is told so
+  privately. Comments people leave on the **Plan** tab reach the channel's agent as
+  feedback from the person who wrote them. When the channel already has Slack's maximum
+  of five tabs, the agent's tab it updated least recently makes room for a new one; the
+  Plan tab, the Code tab and tabs others added are never removed. The channel's
+  pull request is also its linked resource in Slack, and the work board is its live
+  summary until the wrap-up replaces it. If Slack stops accepting the channel's updates
+  (it is no longer a code channel, or Kiro Crew is no longer its agent), the dashboard
+  says so once.
   It adds the `code_channels:manage`, `chat:write.customize`, `canvases:write`,
   `channels:write.invites` and `groups:write.invites` scopes. Your workspace must have
   Slack code channels enabled.

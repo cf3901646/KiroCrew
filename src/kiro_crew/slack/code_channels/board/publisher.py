@@ -162,8 +162,53 @@ async def publish(
             except Exception:
                 logger.debug("code channel %s: pin flag not stored", channel, exc_info=True)
     if ts:
+        await _record_summary(binding, ts)
         await _alert(slack, channel, ts, snapshot, _link, owner_id)
     return done
+
+
+async def _record_summary(binding: Binding, board_ts: str) -> None:
+    """Make the board the channel's ``summary_message`` while the session runs.
+
+    The board IS the conductor's running summary, so Slack can show it live
+    (`code channel properties`_), not only after the archive. A current wrap-up
+    (posted for this same session) is the summary instead and is never
+    displaced; it is recorded by :func:`..wrapup.post_wrap_up`, and stays the
+    summary for the rest of that session even as the board keeps changing. Sent
+    once per board message: an edit keeps the ts, so it stays the summary.
+
+    .. _code channel properties: https://docs.slack.dev/ai/slack-code/code-channel-properties#summary-message
+    """
+    channel = binding.channel_id
+    record = await get_async(channel)
+    if record is not None and record.summary_message_ts == board_ts:
+        return
+    if (
+        record is not None
+        and record.summary_ts
+        and record.summary_session_key == binding.session_key
+    ):
+        return
+    client = surface.client()
+    if client is None:
+        return
+    from kiro_crew.slack.code_channels.models import CodeChannelApiError
+
+    try:
+        await client.set_summary_message(channel, board_ts)
+    except CodeChannelApiError as exc:
+        logger.info("code channel %s: live summary not recorded: %s", channel, exc.code)
+        from kiro_crew.slack.code_channels.notices import NOTIFIED, notify_refusal
+
+        if exc.code in NOTIFIED:
+            # Slack will refuse it again: not asked once more for this message.
+            await notify_refusal(channel, exc.code, session_key=binding.session_key)
+            await update_async(channel, summary_message_ts=board_ts)
+        return
+    try:
+        await update_async(channel, summary_message_ts=board_ts)
+    except Exception:
+        logger.debug("code channel %s: summary pointer not stored", channel, exc_info=True)
 
 
 async def _pin(slack: Any, channel: str, ts: str) -> bool:
