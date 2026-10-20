@@ -1226,14 +1226,37 @@ otherwise sit claimable with nothing to claim it.
 
 One CLAIMABLE state gets a second, narrower pass: every `retry_wait` row with
 no lease is read (all pages first, then the writes, counted in
-`ReconcileReport.parked_examined`) for an ending its artifacts prove that the
-table accepts from `retry_wait`. `failed` and `cancelled` settle the row, each
-fenced on the state and generation the pass read; `done` does not
-(`retry_wait -> done` is closed), and `started` or no verdict leaves the row to
-its dispatcher. This is the row a lost terminal write leaves behind — a Stop
+`ReconcileReport.parked_examined`) for a deliberate stop its artifacts prove.
+A `cancelled` verdict cancels the row, fenced on the state and generation the
+pass read. Every other verdict leaves the row to its dispatcher: `done` has no
+edge from `retry_wait`, `started` or no verdict says the run is the
+dispatcher's to re-run, and `failed` is not written because a wait wake or a
+park also lands a row in `retry_wait` for a retry and writes no claim, so a
+failure cannot be told apart from one the dispatcher was meant to retry. This
+is the row a lost terminal write leaves behind — a Stop
 whose cancel was dropped, with the tombstone already recording the stop — and
 `count_pending` keeps counting it, so without the pass the parent's
 attached-children guard answers `409 slot_subagents_running` on every turn.
+
+The pass matches the stop to the row's CURRENT attempt by identity, never by
+time. A claim reads no artifact and the run folder is the row id's, so a row
+whose ending was lost can be claimed and run again over the folder its earlier
+attempt ended in. So an attempt is named by the generation of the claim that
+began it: the `claimed` event records it, the registered run keeps it as
+`SubagentInfo._taskq_attempt` (a wait wake moves the run's fence generation,
+never this), and every tombstone the run writes records it as `taskq_attempt`
+(a later bookkeeping rewrite, such as the delivery acknowledgement, carries it
+forward). The pass reads each row's latest `claimed` event (one
+`latest_events` read per page) and asks `artifact_probe(row, attempt=...)`; the
+subagent probe answers only from a tombstone whose `taskq_attempt` equals that
+attempt. Every case it cannot match leaves the row untouched, as on a store
+without the pass: a tombstone naming an earlier attempt (a wall-clock step
+cannot change that), a tombstone written before tombstones named their attempt
+(a row stranded before this pass shipped stays stranded; `kirocrew doctor`
+names it once its due time is long past, as the reported row's was), a row with no claim, a page whose claims cannot be read (named in
+`report.errors`), and a probe that does not take `attempt` (it raises, which
+is recorded). With no `artifact_probe` the pass reads no row. The `ACTIVE`
+pass calls the probe without `attempt`, as before.
 
 ## Waits (`waits.py`)
 
