@@ -379,7 +379,21 @@ view fails as `AcpRuntimeError` carrying the projection's sentence, the error th
 provider's startup paths translate; a session refused for a
 settings file names the file instead of that guard, and the guard remains for
 what it was written for: an element neither granted nor pre-empted while the
-files allow it.
+files allow it. Registry mode never reaches that guard: it is a whole-install
+`registry` access ceiling (`_mcp_registry_mode`) in which kiro-cli resolves every
+managed entry against the admin's catalog by map key, so no agent's
+`kirocrew-core` can carry a per-session identity element. The projection reads
+that mode at preparation and, for the shared runtime alone
+(`per_session_element=True`, the path where an element would replace the
+declaration), leaves each agent EXACTLY as authored -- its
+`skill://` resources kept, no managed element, no `skill_search` injected, and
+NOT a search agent -- rather than stripping the resources on the promise of an
+element that can never mount, which would cost a governed agent its native skills
+AND leave `skill_search` answering `identity_unattested`. With no search agent to
+collide with, the mount's empty registry-mode verdict refuses no session, and the
+agent runs its native skills under the admin's catalog. The direct client
+(`per_session_element=False`) mounts no element, so the ceiling does not reach it
+and its view is unchanged by registry mode.
 
 The workspace overlay owns `chat.disableInheritingDefaultResources=true` while
 Crew supplies discovery. Only literal JSON `true` in the original native setting

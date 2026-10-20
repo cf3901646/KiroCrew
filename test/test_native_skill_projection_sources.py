@@ -298,8 +298,12 @@ def test_the_registry_marker_on_the_spec_entry_is_crews_own_only_while_the_mode_
 
     monkeypatch.setattr(session_mcp, "_registry_mode", lambda: True)
     prepared = projection.prepare_native_skill_projection(tree.project)
-    assert prepared.search_agents == {"kirocrew"} and prepared.errors == {}
+    # Registry mode is a whole-install ceiling: the per-session element can mount
+    # for no agent, so the projection leaves the agent as authored and marks no
+    # search agent, yet still publishes a view the spawn can run.
+    assert prepared.search_agents == set() and prepared.errors == {}
     assert prepared.agent("kirocrew")  # the spawn has an alias to run
+    # The marker on the spec entry is still Crew's own while the mode is on.
     assert session_mcp.native_mount_withholding("kirocrew-core", core, []) is None
     # A transport a user chose is still judged, whatever the mode.
     sources = [session_mcp.NativeSettingsSource("s", Path("s"), {"kirocrew-core": {"type": "sse"}})]
@@ -397,6 +401,72 @@ async def test_settings_that_cannot_be_read_refuse_the_search_agents_sessions_by
     assert reason.endswith("to restore skill search")
     assert await _session_refusal(prepared, tree) == f"Agent 'kirocrew': {reason}"
     assert _mount(prepared, tree).elements == []
+
+
+@pytest.mark.asyncio
+async def test_registry_mode_leaves_the_agent_as_authored_and_starts_the_session(tree, monkeypatch):
+    """A registry-governed install resolves managed servers from the admin catalog.
+
+    Under registry mode kiro-cli resolves every managed ``mcpServers`` entry
+    against the admin's catalog by map key, so this backend can mint no
+    per-session identity element for any agent. The projection must therefore
+    leave the agent EXACTLY as authored -- keep its ``skill://`` resources, mount
+    no managed element, inject no ``skill_search``, and NOT mark it a search
+    agent -- rather than strip the resources on the promise of an element that
+    can never mount. The session then composes and starts; nothing is refused.
+    """
+    spec = {
+        "name": "kirocrew",
+        "tools": ["*"],
+        "resources": ["skill://writing-tests", "file://RULES.md"],
+        "mcpServers": {"kirocrew-core": MANAGED},
+    }
+    (tree.agents / "kirocrew.json").write_text(json.dumps(spec), encoding="utf-8")
+    tree.specs["kirocrew"] = spec
+    monkeypatch.setattr(session_mcp, "_registry_mode", lambda: True)
+    from test_acp_runtime import _make_runtime
+
+    prepared = projection.prepare_native_skill_projection(tree.project)
+    # Not a search agent, no error, and the authored skill resources survive.
+    assert prepared.search_agents == set() and prepared.errors == {}
+    view = prepared.specs["kirocrew"]
+    assert "skill://writing-tests" in view["resources"]
+    assert projection._SEARCH_TOOL not in view.get("tools", [])
+    mount = _mount(prepared, tree)
+    assert mount.elements == [] and mount.withheld == {}
+    runtime, _, _ = _make_runtime()
+    runtime._native_skill_projection = prepared
+    # No search agent means the start guard is never reached: the session composes.
+    servers = await runtime._unpooled_control_planes([], "kirocrew", tree.project)
+    assert servers == []
+    # The ceiling is the per-session ELEMENT. The direct client mounts none, so
+    # registry mode does not reach it: it still treats the agent as a search
+    # agent (skill_search granted by the view's ``tools``) -- the ceiling takes
+    # no working tool away.
+    direct = projection.prepare_native_skill_projection(tree.project, per_session_element=False)
+    assert direct.search_agents == {"kirocrew"}
+    assert direct.specs["kirocrew"]["tools"] == ["*"]
+
+
+@pytest.mark.asyncio
+async def test_a_search_agent_with_nothing_granting_the_element_still_reaches_the_guard(
+    tree, monkeypatch
+):
+    """The generic guard is unchanged where it is the honest answer: a real misconfig.
+
+    Outside registry mode, a search agent whose kirocrew-core the mount neither
+    produced nor withheld with a reason, and that no broker stub carries, is a
+    genuinely broken configuration, and the guard that names it must still fire.
+    """
+    monkeypatch.setattr(
+        session_mcp,
+        "kiro_control_plane_servers",
+        lambda *a, **k: session_mcp.NativeControlPlaneMount([], {}),
+    )
+    prepared = projection.prepare_native_skill_projection(tree.project)
+    assert prepared.search_agents == {"kirocrew"}
+    message = await _session_refusal(prepared, tree)
+    assert "Cannot bind skill_search" in message and "server configuration" in message
 
 
 @pytest.mark.asyncio

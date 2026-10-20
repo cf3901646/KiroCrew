@@ -304,6 +304,27 @@ def prepare_native_skill_projection(
     # its bounded directory, so such an agent needs the same search tool a mapped
     # one gets -- see agent_discovery.inherited_skill_globs.
     inherited_globs = inherited_skill_globs(work_dir, kiro_home_dir=kiro_home())
+    # Registry mode is a whole-install CEILING, not a settings-file restriction:
+    # kiro-cli resolves every managed ``mcpServers`` entry against the admin's
+    # catalog by map key, so the per-session identity element Crew mounts for a
+    # search agent can never be minted for ANY agent (see
+    # ``session_mcp.kiro_control_plane_servers``). An install-level declaration
+    # (``agent.mcp_registry_mode``) is static for the view's life like the spec
+    # the projection already judges here, so it belongs at preparation: a shared
+    # runtime's search agent is left EXACTLY as authored under registry mode --
+    # its ``skill://`` resources kept, no managed element, no ``skill_search``
+    # injected, not a search agent -- rather than stripped on the promise of an
+    # element that cannot mount, which would strip its native skills AND leave
+    # skill_search answering ``identity_unattested``. The mount answers registry
+    # mode too, so the two readers agree; the mount's empty verdict then has no
+    # search agent to collide with and no session is refused for it.
+    #
+    # Only where an element WOULD replace the declaration -- the shared runtime,
+    # ``per_session_element``. The direct client mounts no element (identity
+    # rides the process environment, kiro-cli loads the view's entry itself), so
+    # the element ceiling does not reach it; gating its behaviour on registry
+    # mode would take ``skill_search`` away on a path the ceiling never touched.
+    registry_ceiling = per_session_element and session_mcp._registry_mode()
     for agent in list_agents(project_dir=str(work_dir)):
         if not agent.filename:
             continue
@@ -330,9 +351,16 @@ def prepare_native_skill_projection(
         view["description"] = _managed_view_description(agent.name, crew_home_id)
         resources = view.get("resources", [])
         resources = resources if isinstance(resources, list) else []
-        view["resources"] = [
-            r for r in resources if not (isinstance(r, str) and r.startswith("skill://"))
-        ]
+        # Under registry mode the view is left as authored (see the note above the
+        # loop): the ``skill://`` resources are KEPT, because the element that
+        # would replace them with ``skill_search`` can never mount, and stripping
+        # them would cost the agent its native skills for nothing. The key is set
+        # either way so the inheritance-append below always finds a list.
+        view["resources"] = (
+            list(resources)
+            if registry_ceiling
+            else [r for r in resources if not (isinstance(r, str) and r.startswith("skill://"))]
+        )
         mapped = any(isinstance(r, str) and r.startswith("skill://") for r in resources)
         # An unmapped custom agent reaches the block below only through its
         # inherited skill trees. Where the block would refuse a mapped agent, this
@@ -344,7 +372,7 @@ def prepare_native_skill_projection(
             and bool(inherited_globs)
             and can_inherit_skills(spec)
         )
-        if agent.name == "kirocrew" or mapped or inherited_only:
+        if not registry_ceiling and (agent.name == "kirocrew" or mapped or inherited_only):
             refusal = skill_search_refusal(view)
             if refusal is not None:
                 errors[agent.name] = refusal
@@ -458,7 +486,7 @@ def prepare_native_skill_projection(
                         "value": local.get(_INHERIT_SETTING),
                     }
 
-                if inherited:
+                if inherited and not registry_ceiling:
                     for view in specs.values():
                         for resource in (
                             f"file://{kiro_home().as_posix()}/steering/**/*.md",
@@ -542,10 +570,22 @@ def prepare_native_skill_projection(
                             # The ledger only serves names stored before a
                             # restart; losing one write never blocks a spawn.
                             logger.debug("skill projection: view ledger not written", exc_info=True)
-                    local[_MANAGED_SETTING] = inherited
-                    local[_INHERIT_SOURCE] = preference_source
-                    local[_INHERIT_SETTING] = True
-                    atomic_write(locked_settings, json.dumps(local, indent=2))
+                    if registry_ceiling:
+                        # Under the registry ceiling the projection supplies NO
+                        # discovery (no element, no skill_search), so the overlay
+                        # that turns off kiro-cli's native inheritance must not be
+                        # applied: that would leave an inherited-only agent (and
+                        # ``kirocrew`` with no ``skill://`` resources) with neither
+                        # Crew's bounded skill directory NOR kiro-cli's native
+                        # default skill trees -- no skills at all. Restore native
+                        # inheritance (undoing any overlay a non-governed spawn
+                        # left) so kiro-cli loads the defaults itself.
+                        _restore_inheritance(locked_settings, local)
+                    else:
+                        local[_MANAGED_SETTING] = inherited
+                        local[_INHERIT_SOURCE] = preference_source
+                        local[_INHERIT_SETTING] = True
+                        atomic_write(locked_settings, json.dumps(local, indent=2))
                     prepared = NativeSkillProjection(
                         aliases,
                         specs,
