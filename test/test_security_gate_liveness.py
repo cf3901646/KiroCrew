@@ -416,7 +416,11 @@ def _url_payload_command(n: int) -> str:
 #: paragraphs, glue comments, owner imports, owner list, install, class swap and ``__all__``; and
 #: their ``TYPE_CHECKING`` manifests (two each in ``redaction`` and ``exfil``, one in
 #: ``denied_rules``). Every moved statement is unchanged; no rule, threshold or pass changed.
-_PACKAGE_LINE_BUDGET = 31_509
+#:
+#: Raised again, from 31,509, for ``rm_floor`` reading a nested shell's ``-c`` operand:
+#: a bash-faithful word scan, the shell's option walk and a depth cap that fails
+#: closed. No pattern moved.
+_PACKAGE_LINE_BUDGET = 31_614
 
 #: Ceiling on any ONE file in the package. This is what the bound is really for --
 #: a package total says nothing about a single file growing back into a second
