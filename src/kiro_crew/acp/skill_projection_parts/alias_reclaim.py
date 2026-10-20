@@ -210,6 +210,18 @@ _REAPER_LOCK = threading.Lock()
 _REAPER: threading.Thread | None = None
 
 
+def _reaper_alive() -> bool:
+    """True when the reaper thread is running and can still drain a queued end.
+
+    A finalizer that lands during interpreter shutdown (the ``atexit`` weakref
+    sweep) may find the daemon reaper already gone; a queued end would then never
+    run. ``_end_projection`` consults this to fall back to an inline lease
+    release in that case, so the lock file is not left behind.
+    """
+    reaper = _REAPER
+    return reaper is not None and reaper.is_alive()
+
+
 def _ensure_projection_reaper() -> None:
     """Start the thread that ends collected projections, if it is not running.
 
@@ -244,16 +256,42 @@ def _reap_collected_projections() -> None:
 
 
 def _end_projection(
-    lease_stack: ExitStack, directory: Path, crew_home_id: str, side_dir: Path
+    lease_stack: ExitStack,
+    directory: Path,
+    crew_home_id: str,
+    side_dir: Path,
+    *,
+    from_release: bool = False,
 ) -> None:
     """The lease finalizer: release the lease, then prune eagerly.
 
-    Called by :meth:`NativeSkillProjection.release` (the client's shutdown path
-    calls that on the event-loop thread) or, for a projection that was merely
-    dropped, when its last reference goes or the cyclic collector frees it.
-    Inside a collection nothing runs here: the end is queued for the reaper
-    thread (:data:`_COLLECTING_THREAD` says why). Otherwise, off the loop the
-    whole sequence runs inline. On the loop ALL of it goes to a daemon
+    Reached two ways, told apart by ``from_release`` rather than any process
+    state: :meth:`NativeSkillProjection.release` detaches the finalizer and calls
+    this DIRECTLY with ``from_release=True`` (a known-safe call site), while the
+    ``weakref.finalize`` machinery calls it with the default ``from_release=False``
+    when the projection is merely dropped -- its last reference gone, or the
+    cyclic collector freeing it.
+
+    A finalizer fires on whichever thread last dropped the reference, at that
+    point in its code -- possibly deep inside a non-reentrant stdlib lock (a
+    ``ThreadPoolExecutor.submit`` holding ``_global_shutdown_lock`` while it
+    constructs the ``Future`` whose allocation freed this projection). The end
+    takes locks and calls the path-resolution subprocess pool, whose bounded
+    request re-enters that same executor, so run inline there it waits on a lock
+    its own thread already holds -- forever, until the test timeout kills the
+    xdist worker. So a finalizer-driven end (``from_release`` false) off the loop
+    is NEVER run inline: it is queued for the daemon reaper thread, which owns a
+    context holding none of those locks. This covers both the refcount-zero drop
+    and the cyclic collector (``_COLLECTING_THREAD``).
+
+    The one exception is interpreter shutdown, where the reaper may already be
+    gone and a queued end would never run -- so if the reaper is not alive the
+    lease is released INLINE here (its two identity-checked unlinks are safe from
+    any thread; the prune, which re-enters the executor, is dropped and the next
+    process's boot drain covers it). The lease release is what must not be lost:
+    a retained lock file blocks the next process's view of this home.
+
+    On the loop ALL of it -- release and finalizer alike -- goes to a daemon
     thread: the prune waits on a file lock (up to the publication lock's
     ceiling), and the lease release itself unlocks and closes the holder, then
     stats, opens and unlinks two files -- blocking calls whose cost on a slow or
@@ -262,13 +300,21 @@ def _end_projection(
     inline, the two unlinks the finalizer always did, and drops the prune: the
     next spawn's prune covers it.
     """
-    if _COLLECTING_THREAD == threading.get_ident():
-        _COLLECTED_ENDS.put(
-            functools.partial(
-                _end_projection_off_loop, lease_stack, side_dir, directory, crew_home_id
-            )
-        )
-        return
+    if not from_release:
+        if _COLLECTING_THREAD == threading.get_ident() or not _reaper_alive():
+            # A collection in flight, OR interpreter shutdown with the reaper
+            # gone: queue when the reaper can still drain it, else release the
+            # lease inline so it is not lost. ``SimpleQueue.put`` is reentrant
+            # and safe from inside a collection.
+            if _reaper_alive():
+                _COLLECTED_ENDS.put(
+                    functools.partial(
+                        _end_projection_off_loop, lease_stack, side_dir, directory, crew_home_id
+                    )
+                )
+            else:
+                lease_stack.close()
+            return
     if on_event_loop():
         try:
             threading.Thread(
@@ -281,6 +327,17 @@ def _end_projection(
         except RuntimeError:
             logger.debug("skill projection: lease release thread not started", exc_info=True)
         lease_stack.close()
+        return
+    if not from_release:
+        # A finalizer fired off the loop (a refcount-zero drop, not reached
+        # through ``release``): the thread that dropped the last reference may be
+        # inside a non-reentrant lock, so the end must not run inline here. Hand
+        # it to the reaper, which runs in a context holding none of those locks.
+        _COLLECTED_ENDS.put(
+            functools.partial(
+                _end_projection_off_loop, lease_stack, side_dir, directory, crew_home_id
+            )
+        )
         return
     _end_projection_off_loop(lease_stack, side_dir, directory, crew_home_id)
 
