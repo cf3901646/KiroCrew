@@ -18647,7 +18647,9 @@
       "goals_track_send": "보내기",
       "goals_track_failed": "채팅으로 보내지 못했습니다. 다시 시도해 주세요.",
       "dashboard_owner_only": "이 크루메이트의 대시보드는 소유자만 볼 수 있어요.",
-      "dashboard_values_stale": "실시간 값 업데이트가 중단되어 마지막으로 받은 값을 표시합니다."
+      "dashboard_values_stale": "실시간 값 업데이트가 중단되어 마지막으로 받은 값을 표시합니다.",
+      "dashboard_open_session_ended": "이 워커의 세션이 종료되어 열 항목이 없습니다.",
+      "dashboard_open_session_stale": "이 카드는 오래되었습니다. 페이지가 새로 고쳐질 때까지 기다린 후 다시 시도하세요."
     },
     "tasksCapacityCard": {
       "title": "작업 및 용량",

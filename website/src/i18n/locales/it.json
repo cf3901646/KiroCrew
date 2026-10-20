@@ -19215,7 +19215,9 @@
       "goals_track_send": "Invia",
       "goals_track_failed": "Impossibile inviarlo in chat. Riprova.",
       "dashboard_owner_only": "Solo il proprietario di questo compagno può vederne la dashboard.",
-      "dashboard_values_stale": "I valori in tempo reale non si aggiornano più: questi sono gli ultimi ricevuti."
+      "dashboard_values_stale": "I valori in tempo reale non si aggiornano più: questi sono gli ultimi ricevuti.",
+      "dashboard_open_session_ended": "La sessione di questo worker è terminata, quindi non c'è nulla da aprire.",
+      "dashboard_open_session_stale": "Questa scheda non è aggiornata. Attendi l'aggiornamento della pagina e riprova."
     },
     "tasksCapacityCard": {
       "title": "Attività e capacità",

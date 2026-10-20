@@ -19215,7 +19215,9 @@
       "goals_track_send": "Envoyer",
       "goals_track_failed": "Impossible d'envoyer ça dans la discussion. Réessaie.",
       "dashboard_owner_only": "Seul le propriétaire de ce coéquipier peut voir son tableau de bord.",
-      "dashboard_values_stale": "Les valeurs en direct ne sont plus mises à jour : voici les dernières reçues."
+      "dashboard_values_stale": "Les valeurs en direct ne sont plus mises à jour : voici les dernières reçues.",
+      "dashboard_open_session_ended": "La session de ce worker est terminée, il n'y a donc rien à ouvrir.",
+      "dashboard_open_session_stale": "Cette carte est obsolète. Attends l'actualisation de la page, puis réessaie."
     },
     "tasksCapacityCard": {
       "title": "Tâches et capacité",

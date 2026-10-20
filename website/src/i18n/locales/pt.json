@@ -19215,7 +19215,9 @@
       "goals_track_send": "Enviar",
       "goals_track_failed": "Não foi possível enviar ao chat. Tente de novo.",
       "dashboard_owner_only": "Só o dono deste colega pode ver o painel dele.",
-      "dashboard_values_stale": "Os valores ao vivo pararam de atualizar, portanto estes são os últimos recebidos."
+      "dashboard_values_stale": "Os valores ao vivo pararam de atualizar, portanto estes são os últimos recebidos.",
+      "dashboard_open_session_ended": "A sessão deste worker terminou, então não há nada para abrir.",
+      "dashboard_open_session_stale": "Este cartão está desatualizado. Aguarde a página atualizar e tente novamente."
     },
     "tasksCapacityCard": {
       "title": "Tarefas e capacidade",

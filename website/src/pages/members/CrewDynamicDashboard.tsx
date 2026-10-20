@@ -9,6 +9,7 @@ import ErrorNotice from '../../components/ErrorNotice'
 import { useTheme } from '../../hooks/useTheme'
 import { useSandboxDoc } from '../../hooks/useSandboxDoc'
 import { useFrameOpenLink } from '../../hooks/useFrameOpenLink'
+import { useFrameOpenSession } from '../../hooks/useFrameOpenSession'
 import { buildSrcdoc, readThemeVars } from '../../lib/widgetSrcdoc'
 import { startDashboardLoadTiming, type DashboardLoadTiming } from '../../lib/dashboardTiming'
 import { i18nT } from '../../i18n/t'
@@ -139,6 +140,21 @@ function isOwnerOnly(e: unknown): boolean {
 
 function isNothingStaged(e: unknown): boolean {
   return isNotFoundError(e) && apiErrorCode(e) === 'no_preview'
+}
+
+/**
+ * What to tell the person when the gateway refuses to open a worker's session.
+ *
+ * The two refusals a person can act on differ: the worker's session is gone (nothing to
+ * do), or the card no longer matches the board (wait for the page to refresh). Anything
+ * else is the generic line, because the code names a cause the person cannot act on.
+ */
+export function openSessionNotice(code: string): string {
+  if (code === 'worker_closed') return i18nT('pages.membersPage.dashboard_open_session_ended')
+  if (code === 'item_not_found' || code === 'ambiguous_item') {
+    return i18nT('pages.membersPage.dashboard_open_session_stale')
+  }
+  return i18nT('appChatLaunch.targetUnavailable')
 }
 
 /** The id of the composed page's data island. Mirrors `dashboard_frame._DATA_ELEMENT_ID`. */
@@ -281,6 +297,18 @@ export default function CrewDynamicDashboard({ target, displayName, avatar, onAc
   onActRef.current = onAct
   // A pull request the page links to: this frame only, GitHub PR URLs only.
   useFrameOpenLink([frameRef])
+  /** The org-chart's "Open session" button reports a refusal here. Nothing goes back into
+   *  the frame: the page learns neither the worker's session key nor why it was refused. */
+  const [openSessionError, setOpenSessionError] = useState<string | null>(null)
+  // The worker session behind a card: this frame only, resolved on the gateway from the
+  // item id, the key kept in the host's JavaScript.
+  useFrameOpenSession(
+    [frameRef],
+    target.kind === 'member'
+      ? (target.slug && target.member ? { kind: 'member', slug: target.slug, member: target.member } : null)
+      : (target.slot ? { kind: 'session', slot: target.slot } : null),
+    setOpenSessionError,
+  )
   const { theme, colorTheme, themeVersion } = useTheme()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const themeVars = useMemo(() => readThemeVars(), [theme, colorTheme, themeVersion])
@@ -1319,6 +1347,20 @@ export default function CrewDynamicDashboard({ target, displayName, avatar, onAc
             {i18nT('pages.membersPage.webview_retry')}
           </Btn>
         </div>
+      )}
+      {openSessionError && (
+        <>
+          {/* No hand-off: the Members page's unsaved Profile and crew-editor drafts, as at
+              the bands above. A refused open leaves the working page on screen, and the
+              agent hand-off navigates to /chat and would discard the drafts to explain a
+              stale card. */}
+          <ErrorNotice
+            message={openSessionNotice(openSessionError)}
+            onDismiss={() => setOpenSessionError(null)}
+            className="shrink-0 m-2"
+            testId="crew-dashboard-open-session-error"
+          />
+        </>
       )}
       {url ? [
         <iframe

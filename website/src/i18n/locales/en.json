@@ -8077,7 +8077,9 @@
       "goals_track_send": "Send",
       "goals_track_failed": "Couldn't send that to the chat. Please try again.",
       "dashboard_owner_only": "Only this crewmate's owner can see its dashboard.",
-      "dashboard_values_stale": "Live values stopped updating, so these are the last ones received."
+      "dashboard_values_stale": "Live values stopped updating, so these are the last ones received.",
+      "dashboard_open_session_ended": "This worker's session has ended, so there is nothing to open.",
+      "dashboard_open_session_stale": "This card is out of date. Wait for the page to refresh, then try again."
     },
     "migrationPage": {
       "app_migration": "App Migration",

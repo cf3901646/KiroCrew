@@ -18647,7 +18647,9 @@
       "goals_track_send": "送信",
       "goals_track_failed": "チャットに送信できませんでした。もう一度お試しください。",
       "dashboard_owner_only": "このクルーメイトのダッシュボードを見られるのはオーナーだけです。",
-      "dashboard_values_stale": "ライブ値の更新が停止したため、最後に受信した値を表示しています。"
+      "dashboard_values_stale": "ライブ値の更新が停止したため、最後に受信した値を表示しています。",
+      "dashboard_open_session_ended": "このワーカーのセッションは終了しているため、開くものがありません。",
+      "dashboard_open_session_stale": "このカードは古くなっています。ページが更新されるまで待ってから、もう一度お試しください。"
     },
     "tasksCapacityCard": {
       "title": "タスクと処理能力",

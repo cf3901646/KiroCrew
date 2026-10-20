@@ -18931,7 +18931,9 @@
       "goals_track_send": "Senden",
       "goals_track_failed": "Konnte das nicht an den Chat senden. Bitte versuch es noch einmal.",
       "dashboard_owner_only": "Nur der Besitzer dieses Crewmates kann sein Dashboard sehen.",
-      "dashboard_values_stale": "Die Live-Werte werden nicht mehr aktualisiert; dies sind die letzten empfangenen Werte."
+      "dashboard_values_stale": "Die Live-Werte werden nicht mehr aktualisiert; dies sind die letzten empfangenen Werte.",
+      "dashboard_open_session_ended": "Die Sitzung dieses Workers ist beendet, es gibt also nichts zu öffnen.",
+      "dashboard_open_session_stale": "Diese Karte ist veraltet. Warte, bis die Seite aktualisiert wurde, und versuche es dann erneut."
     },
     "tasksCapacityCard": {
       "title": "Aufgaben & Kapazität",
