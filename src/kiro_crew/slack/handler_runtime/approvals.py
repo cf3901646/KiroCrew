@@ -409,6 +409,11 @@ def _build_approval_blocks(
         for part in parts:
             if part is None:
                 continue
+            if command is not None:
+                # Decoding the JSON can turn escapes back into the plain text the
+                # redactors ran on above, so each rebuilt part is redacted again.
+                part, _ = redact_exfiltration_urls(part)
+                part, _ = redact_credentials(part)
             # The input can close the code fence itself, so on a code channel's
             # card its entities are escaped too, not only the footer's.
             part = _esc(part)

@@ -246,3 +246,83 @@ def test_an_ordinary_card_is_unchanged(chan: Any) -> None:  # noqa: F811
     texts = _texts(_card_blocks(chan, json.dumps({"command": "git status"}), channel_trust=False))
     assert any('"command"' in t for t in texts)  # the raw input, as before
     assert any(t.startswith(":lock:") and "Running: git status" in t for t in texts)
+
+
+# ── Review fixes: commit-time fences on a worker's grant ──────────────────
+
+
+def _during_grant(e: Any, monkeypatch: pytest.MonkeyPatch, on_call: int, act: Any) -> None:
+    """Run *act* inside the *on_call*-th grant's policy await (1-based)."""
+    from kiro_crew import safety_override as safety_override_mod
+
+    calls = {"n": 0}
+
+    def permitted(_mode: str) -> bool:
+        if _mode == "yolo":  # the override's own policy read, not a grant
+            return e.mode_permitted
+        calls["n"] += 1
+        if calls["n"] == on_call:
+            act()
+        return e.mode_permitted
+
+    monkeypatch.setattr(safety_override_mod, "approval_mode_permitted", permitted)
+
+
+def test_a_replacement_under_the_workers_key_is_never_raised(
+    relay: Any, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    relay.slot._trust = True  # the channel holds Trust: only the worker is granted
+    stranger = _slot(key=WORKER, channel="")
+    stranger._slack_linked = False
+    stranger._created_by = "chat-3-1"
+    _during_grant(relay, monkeypatch, 1, lambda: relay.state._slots.__setitem__(WORKER, stranger))
+
+    async def go() -> asyncio.Future:
+        fut = asyncio.get_running_loop().create_future()
+        stranger._approval_futures["req-x"] = fut
+        await _set("trust")
+        return fut
+
+    fut = asyncio.run(go())
+    assert stranger._trust is False and not fut.done()
+    assert relay.worker._trust is False
+    assert any("worker_refused" in r["resources"] for r in _worker_rows(relay))
+
+
+def test_a_lowering_during_the_worker_grant_wins(
+    relay: Any, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    def lower() -> None:
+        relay.slot._trust = False  # the dashboard put the channel back on Normal
+
+    _during_grant(relay, monkeypatch, 2, lower)  # 1 = the channel's, 2 = the worker's
+    asyncio.run(_set("trust"))
+    assert relay.worker._trust is False
+
+
+def test_a_worker_card_spent_during_an_unchanged_trust_grants_nothing(
+    relay: Any, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    relay.slot._trust = True
+    holder: dict[str, Any] = {}
+    _during_grant(relay, monkeypatch, 1, lambda: holder["fut"].set_result("rejected"))
+
+    async def go() -> Any:
+        card, fut = await _run_relay(relay)
+        holder["fut"] = fut
+        assert await wa.handle_click(relay.orch, _click(OWNER, card, wa.TRUST_ACTION_ID))
+        return fut
+
+    fut = asyncio.run(go())
+    assert fut.result() == "rejected"
+    assert relay.worker._trust is False
+    assert relay.slack.ephemerals[-1][2] == approval_picker.NOT_LIVE_TEXT
+
+
+def test_a_decoded_command_is_redacted_again(chan: Any) -> None:  # noqa: F811
+    key = "AKIA" + "QWERTYUIOPASDFGH"
+    escaped = "".join(f"\\u{ord(c):04x}" for c in key)
+    raw = '{"command": "echo ' + escaped + '", "env": "' + escaped + '"}'
+    texts = _texts(_card_blocks(chan, raw))
+    assert not any(key in t for t in texts)
+    assert sum("[REDACTED" in t for t in texts) == 2

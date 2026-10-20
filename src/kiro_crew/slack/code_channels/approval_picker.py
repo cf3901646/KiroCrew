@@ -328,10 +328,15 @@ async def set_channel_mode(
             _audit("denied", resources, STALE_REASON)
             return ModeResult("refused", NOT_LIVE_TEXT)
         if current_mode(slot) == mode and not _yolo_active():
-            _audit("allowed", f"{resources} result=unchanged")
             # The channel already holds it; its live workers may not (they were
-            # started before it changed).
-            await _apply_to_workers(state, binding, slot, mode, user, via)
+            # started before it changed). No grant has committed yet, so the
+            # originating card's fence rides on theirs.
+            if not await _apply_to_workers(
+                state, binding, slot, mode, user, via, origin_live=still_live
+            ):
+                _audit("denied", resources, STALE_REASON)
+                return ModeResult("refused", NOT_LIVE_TEXT)
+            _audit("allowed", f"{resources} result=unchanged")
             return ModeResult("unchanged", f"ℹ️ This channel is already on *{label(mode)}*.")
         own_cards = _own_pending_cards(binding, slot) if mode == "trust" else []
         _kept_cards.update(own_cards)
@@ -386,15 +391,63 @@ async def _settle_own_cards(binding: Binding, keys: list[str], user: str) -> Non
             logger.debug("trusted channel card not updated", exc_info=True)
 
 
+#: Mode order, for the channel ceiling a worker's grant must stay under.
+_RANK = {"normal": 0, "trust_reads": 1, "trust": 2}
+
+
+def _worker_grant_live(
+    state: Any,
+    binding: Binding,
+    channel_slot: Any,
+    worker: Any,
+    mode: str,
+    origin_live: Callable[[], bool] | None,
+) -> Callable[[], bool]:
+    """The check ``apply_approval_mode`` runs right before it grants *worker*.
+
+    Synchronous and asked after the last await, so what it vouches for holds at
+    the mutation: the exact worker object is still the registered slot under its
+    key (not a replacement under a reused key), it is still the direct, unlinked
+    child of the channel's CURRENT session, and *mode* is not above the mode
+    that session holds now (a concurrent lowering wins). *origin_live*, the card
+    that asked, must still be waiting while no grant has committed.
+    """
+
+    def live() -> bool:
+        current = bound_slot(state, binding)
+        key = str(getattr(worker, "key", "") or "")
+        return (
+            bool(key)
+            and current is channel_slot
+            and (getattr(state, "_slots", None) or {}).get(key) is worker
+            and str(getattr(worker, "_created_by", "") or "") == str(channel_slot.key)
+            and not getattr(worker, "_slack_linked", False)
+            and _RANK.get(mode, 3) <= _RANK.get(current_mode(channel_slot), -1)
+            and (origin_live is None or origin_live())
+        )
+
+    return live
+
+
 async def _apply_to_workers(
-    state: Any, binding: Binding, slot: Any, mode: str, user: str, via: str
-) -> None:
+    state: Any,
+    binding: Binding,
+    slot: Any,
+    mode: str,
+    user: str,
+    via: str,
+    *,
+    origin_live: Callable[[], bool] | None = None,
+) -> bool:
     """Put the channel session's live workers on *mode* too (never raises).
 
     Only :func:`.worker_approvals.live_workers` (the relay's own lineage), each
     through the same audited mutation, so a worker is never left above the
     channel and a raise to Trust answers its pending prompts the way a
     mid-wait dashboard switch does; their relayed cards say so in place.
+
+    *origin_live* is the asking card's fence, carried until the first grant
+    commits. False when that fence refused, so nothing was granted.
     """
     from kiro_crew.slack.code_channels import worker_approvals
 
@@ -405,6 +458,8 @@ async def _apply_to_workers(
         )
         if current_mode(worker) == mode and not _yolo_active():
             continue
+        if origin_live is not None and not origin_live():
+            return False
         # Claim the relayed cards first: the sweep wakes the worker, whose own
         # cleanup would otherwise label them "approved in the dashboard".
         cards = []
@@ -416,13 +471,14 @@ async def _apply_to_workers(
             ]
             for card in cards:
                 card.answered = True
+        live = _worker_grant_live(state, binding, slot, worker, mode, origin_live)
         try:
-            ok, error = await _apply(state, worker, mode, user)
+            ok, error = await _apply(state, worker, mode, user, live)
         except Exception:
             logger.warning("code channel worker mode change failed", exc_info=True)
             ok, error = False, "the change failed"
         _audit(
-            "allowed" if ok else "error",
+            "allowed" if ok else ("denied" if error == STALE_REASON else "error"),
             f"{resources} result={'worker_set' if ok else 'worker_refused'}",
             error,
         )
@@ -432,6 +488,11 @@ async def _apply_to_workers(
                 await worker_approvals.settle_under_trust(card, line)
             else:
                 card.answered = False  # not ours to label: its own outcome will be
+        if ok:
+            origin_live = None  # a grant committed under the fence
+        elif origin_live is not None and error == STALE_REASON and not origin_live():
+            return False
+    return True
 
 
 async def _post_channel(channel: str, text: str) -> None:
