@@ -78,7 +78,7 @@ from kiro_crew.validation import (
     validate_tool_args,
 )
 from kiro_crew.work_ledger import WorkLedgerError
-from kiro_crew.work_vocab import WORK_CONDUCTOR_FIELDS
+from kiro_crew.work_vocab import WORK_CONDUCTOR_FIELDS, WORK_MAX_DEPTH_MAX
 
 logger = logging.getLogger(__name__)
 
@@ -1497,10 +1497,13 @@ async def api_work_ledger_get(request: web.Request) -> web.Response:
     # whether that line has gone past its cap, both read off the same header.
     # Advisory: the compact read carries them so a patrol that reads only the
     # status columns still sees a goal spending past what the user expected.
+    # ``max_depth`` is the conducting depth cap in force right now (never stored),
+    # so a conductor can see how many levels may still dispatch below its own.
     conductor = dict(
         record.to_dict(),
         goal_items_used=record.goal_items_used,
         cap_exceeded=record.cap_exceeded,
+        max_depth=work_ledger.max_depth(),
     )
     payload: dict[str, Any] = {"conductor": conductor, "items": rows}
     if compact:
@@ -1809,7 +1812,7 @@ async def _record_conductor_write(
         generation=_WIDEST_HEX_ID,
         goal=cleaned.get("goal"),
         round=_WIDEST_COUNTER,
-        depth=work_ledger.MAX_DEPTH,
+        depth=WORK_MAX_DEPTH_MAX,
         parent_item=_WIDEST_ITEM_ID,
         title=cleaned.get("title"),
         acceptance=cleaned.get("acceptance"),
@@ -1842,7 +1845,7 @@ async def _record_conductor_write(
             item_id=cleaned.get("item_id") or _WIDEST_ITEM_ID,
             generation=_WIDEST_HEX_ID,
             round=_WIDEST_COUNTER,
-            depth=work_ledger.MAX_DEPTH,
+            depth=WORK_MAX_DEPTH_MAX,
             parent_item=_WIDEST_ITEM_ID,
             fails=_WIDEST_COUNTER,
             event=_WIDEST_EVENT_TEXT,

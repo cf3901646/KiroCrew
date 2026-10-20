@@ -10,6 +10,7 @@ defined here, so each one reads, imports and patches as ``kiro_crew.work_ledger.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -24,7 +25,6 @@ from kiro_crew.work_ledger_records import (
     MAX_ARTIFACT_KEY_CHARS,
     MAX_ARTIFACT_KEYS,
     MAX_ARTIFACT_VALUE_CHARS,
-    MAX_DEPTH,
     MAX_PR,
     MAX_RECORD_BYTES,
     MIN_PR,
@@ -34,6 +34,14 @@ from kiro_crew.work_ledger_records import (
     WorkItem,
     WorkLedgerError,
     _finite_int,
+    logger,
+)
+from kiro_crew.work_vocab import (
+    WORK_MAX_DEPTH_DEFAULT,
+    WORK_MAX_DEPTH_ENV,
+    WORK_MAX_DEPTH_MAX,
+    WORK_MAX_DEPTH_MIN,
+    WORK_MAX_DEPTH_SETTING,
 )
 
 # --------------------------------------------------------------------------- #
@@ -172,15 +180,59 @@ def _require_count(value: Any, name: str) -> int:
 # --------------------------------------------------------------------------- #
 
 
+def max_depth() -> int:
+    """The conducting depth cap in force: environment, then config, then the default.
+
+    :data:`WORK_MAX_DEPTH_ENV` wins when it holds an integer inside
+    ``[WORK_MAX_DEPTH_MIN, WORK_MAX_DEPTH_MAX]``; a value outside that range, or not an integer, is
+    refused with a warning and the next source answers, never clamped. Next is the
+    ``work_ledger.max_depth`` config key, which the config loader has already held to
+    the same range. With neither set the answer is :data:`WORK_MAX_DEPTH_DEFAULT`, so nothing
+    changes for an install that sets nothing. Read per call, not at import: the config
+    loader caches by file fingerprint, so a changed setting is seen without a restart.
+    """
+    raw = os.environ.get(WORK_MAX_DEPTH_ENV)
+    if raw is not None and raw.strip():
+        text = raw.strip()
+        try:
+            value = int(text)
+        except ValueError:
+            value = None
+        if value is not None and WORK_MAX_DEPTH_MIN <= value <= WORK_MAX_DEPTH_MAX:
+            return value
+        logger.warning(
+            "work ledger: ignoring %s=%r; it must be an integer from %d to %d",
+            WORK_MAX_DEPTH_ENV,
+            text,
+            WORK_MAX_DEPTH_MIN,
+            WORK_MAX_DEPTH_MAX,
+        )
+    try:
+        from kiro_crew.config.loader import KiroCrewConfig
+
+        return KiroCrewConfig.load().work_ledger.max_depth
+    except Exception:  # noqa: BLE001 -- a cap is not worth failing a ledger call over
+        logger.debug("work ledger: config unavailable, using the default depth cap", exc_info=True)
+        return WORK_MAX_DEPTH_DEFAULT
+
+
+def depth_cap_hint() -> str:
+    """The sentence a depth refusal ends with: which setting changes the cap."""
+    return (
+        f"the cap is {max_depth()} levels; raise it with {WORK_MAX_DEPTH_SETTING} or "
+        f"{WORK_MAX_DEPTH_ENV} (allowed {WORK_MAX_DEPTH_MIN}-{WORK_MAX_DEPTH_MAX})"
+    )
+
+
 def may_conduct(depth: int) -> bool:
     """Whether a session at *depth* may hold a ledger and dispatch from it.
 
-    The one reading of :data:`MAX_DEPTH`. :func:`child_depth`, :func:`ensure_conductor`
-    and :func:`_create_item` all decide through this predicate so that the level a
-    dispatch admits, the level a ledger may open at and the level that may create
-    an item are the same level by construction.
+    The one reading of the cap (:func:`max_depth`). :func:`child_depth`,
+    :func:`ensure_conductor` and :func:`_create_item` all decide through this predicate
+    so that the level a dispatch admits, the level a ledger may open at and the level
+    that may create an item are the same level by construction.
     """
-    return depth < MAX_DEPTH
+    return depth < max_depth()
 
 
 def child_depth(parent_depth: int) -> int:
@@ -197,7 +249,7 @@ def child_depth(parent_depth: int) -> int:
     child = depth + 1
     if not may_conduct(child):
         raise WorkLedgerError(
-            f"depth {depth} is the last conducting level (the cap is {MAX_DEPTH}); "
+            f"depth {depth} is the last conducting level ({depth_cap_hint()}); "
             "this session may not dispatch a conductor",
             code=CODE_DEPTH_EXCEEDED,
             field="depth",
