@@ -20,9 +20,10 @@ click in the dashboard. Nothing is ever looked up by request id state-wide.
 
 **Trust this channel** on a worker's card puts the CHANNEL's session on Trust
 through :func:`.approval_picker.set_channel_mode` (the audited dashboard
-mutation, with its warning line) and approves this one call. A worker that is
-already running keeps its own mode: the change applies to the channel's session
-and to the workers it creates from then on.
+mutation, with its warning line) and approves this one call. The change reaches
+the workers the channel's session is already running too (raised and lowered
+with it, see :func:`.approval_picker.set_channel_mode`); a raise to Trust answers
+their waiting prompts and their cards say so in place.
 
 **Who may answer.** The owner, under the gates every code-channel control
 applies (:func:`.approval_picker.authorize`); anyone else is told so
@@ -135,15 +136,46 @@ def live_workers(state: Any, channel_slot: Any) -> list[Any]:
     ]
 
 
-def pending_cards(worker_key: str) -> list[WorkerCard]:
-    """The relayed cards still live for *worker_key*'s prompts."""
-    return [c for c in list(_cards.values()) if c.worker_key == worker_key]
+def claim_pending(worker_key: str) -> list[WorkerCard]:
+    """Claim *worker_key*'s relayed cards still waiting, before a Trust sweep.
+
+    A claimed card's own :func:`finish` leaves it alone, so the sweep's answer
+    is not labelled "approved in the dashboard"; :func:`settle_claimed` writes it.
+    """
+    cards = [
+        c
+        for c in list(_cards.values())
+        if c.worker_key == worker_key and not c.answered and not c.future.done()
+    ]
+    for card in cards:
+        card.answered = True
+    return cards
 
 
-async def settle_under_trust(card: WorkerCard, line: str) -> None:
-    """A card whose prompt the channel's Trust answered: say so, in place."""
-    card.answered = True
-    await _update(card, line)
+async def settle_claimed(
+    cards: list[WorkerCard], *, granted: bool, line: str, skip: str = ""
+) -> None:
+    """Say how each claimed card's prompt ended, in place (never raises).
+
+    *line* only for a prompt the grant approved; any other ending (rejected or
+    approved elsewhere meanwhile, the turn ended) gets the line :func:`finish`
+    would have written, since a claimed card's ``finish`` said nothing. A prompt
+    still waiting is released to its own ``finish``. *skip* (``channel:ts``) is
+    the card whose click asked: that click writes its text.
+    """
+    for card in cards:
+        if granted and f"{card.channel}:{card.ts}" == skip:
+            continue
+        fut = card.future
+        if not fut.done():
+            card.answered = False
+            continue
+        result = "" if fut.cancelled() else str(fut.result())
+        if granted and result.startswith("approved"):
+            text = line
+        else:
+            text = settled_line(result, deny_cause="", host_ended=fut.cancelled())
+        await _update(card, text)
 
 
 async def channel_of_worker(state: Any, slot: Any) -> Binding | None:
@@ -391,7 +423,12 @@ async def handle_click(orch: Any, payload: dict[str, Any]) -> bool:
             )
 
         outcome = await set_channel_mode(
-            binding, "trust", user, via="worker_card", still_live=_live
+            binding,
+            "trust",
+            user,
+            via="worker_card",
+            still_live=_live,
+            origin_card=f"{channel}:{msg_ts}",
         )
         if outcome.result not in ("set", "unchanged"):
             await _ephemeral(channel, user, outcome.text)

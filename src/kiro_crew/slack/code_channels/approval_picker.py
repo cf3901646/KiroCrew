@@ -21,7 +21,8 @@ the gates every code-channel command applies. Anyone else is told so
 ephemerally, and nothing changes.
 
 **Trust is said out loud.** A change to Trust posts one line in the channel:
-tools run without prompts, and workers the session starts inherit it.
+tools run without prompts, for the session's workers too, running ones included
+(every mode change reaches the workers it already runs).
 """
 
 from __future__ import annotations
@@ -95,22 +96,6 @@ RAN_UNDER_TRUST = "🤝 Ran under Trust: <@{user}> put this channel on Trust."
 #: Code-channel approval cards the channel's Trust answered and re-wrote in
 #: place, so ``_run_chat``'s cleanup keeps them instead of deleting them.
 _kept_cards: set[str] = set()
-
-
-def command_and_rest(tool_input: str) -> tuple[str | None, str | None]:
-    """How a code channel's card shows a tool's input, so the command appears once.
-
-    ``(command, the other arguments as JSON or None)`` when *tool_input* is a JSON
-    object with a string ``command``; ``(None, None)`` otherwise (shown as is).
-    """
-    try:
-        data = json.loads(tool_input)
-    except (TypeError, ValueError):
-        return None, None
-    if not isinstance(data, dict) or not isinstance(data.get("command"), str):
-        return None, None
-    rest = {k: v for k, v in data.items() if k != "command" and v not in (None, "", [], {})}
-    return data["command"], (json.dumps(rest, indent=2, ensure_ascii=False) if rest else None)
 
 
 def keep_card(channel: str, ts: str) -> bool:
@@ -304,6 +289,7 @@ async def set_channel_mode(
     *,
     via: str,
     still_live: Callable[[], bool] | None = None,
+    origin_card: str = "",
 ) -> ModeResult:
     """Put *binding*'s session on *mode* for *user*, who is already authorized.
 
@@ -311,6 +297,9 @@ async def set_channel_mode(
     channel lock and again right before the mutation, and a card whose prompt
     is no longer waiting changes no mode. On a change to Trust, posts the
     channel's warning line.
+
+    *origin_card* (``channel:ts``) is the card whose click asked: the caller
+    writes its final text, so the Trust sweep does not re-write it first.
     """
     channel = binding.channel_id
     resources = f"channel={channel} user={user} mode={mode} via={via}"
@@ -332,7 +321,14 @@ async def set_channel_mode(
             # started before it changed). No grant has committed yet, so the
             # originating card's fence rides on theirs.
             if not await _apply_to_workers(
-                state, binding, slot, mode, user, via, origin_live=still_live
+                state,
+                binding,
+                slot,
+                mode,
+                user,
+                via,
+                origin_live=still_live,
+                origin_card=origin_card,
             ):
                 _audit("denied", resources, STALE_REASON)
                 return ModeResult("refused", NOT_LIVE_TEXT)
@@ -354,8 +350,8 @@ async def set_channel_mode(
             _audit("error", f"{resources} result=refused", error)
             return ModeResult("refused", FAILED_TEXT.format(reason=error))
         _audit("allowed", f"{resources} result=set")
-        await _settle_own_cards(binding, own_cards, user)
-        await _apply_to_workers(state, binding, slot, mode, user, via)
+        await _settle_own_cards(binding, [k for k in own_cards if k != origin_card], user)
+        await _apply_to_workers(state, binding, slot, mode, user, via, origin_card=origin_card)
     if mode == "trust":
         await _post_channel(channel, TRUST_WARNING.format(user=user, command=_command()))
     await _refresh(binding, note=SET_NOTE.format(label=label(mode), user=user))
@@ -438,6 +434,7 @@ async def _apply_to_workers(
     via: str,
     *,
     origin_live: Callable[[], bool] | None = None,
+    origin_card: str = "",
 ) -> bool:
     """Put the channel session's live workers on *mode* too (never raises).
 
@@ -462,15 +459,8 @@ async def _apply_to_workers(
             return False
         # Claim the relayed cards first: the sweep wakes the worker, whose own
         # cleanup would otherwise label them "approved in the dashboard".
-        cards = []
-        if mode == "trust":
-            cards = [
-                c
-                for c in worker_approvals.pending_cards(str(getattr(worker, "key", "")))
-                if not c.answered and not c.future.done()
-            ]
-            for card in cards:
-                card.answered = True
+        key = str(getattr(worker, "key", ""))
+        cards = worker_approvals.claim_pending(key) if mode == "trust" else []
         live = _worker_grant_live(state, binding, slot, worker, mode, origin_live)
         try:
             ok, error = await _apply(state, worker, mode, user, live)
@@ -482,12 +472,9 @@ async def _apply_to_workers(
             f"{resources} result={'worker_set' if ok else 'worker_refused'}",
             error,
         )
-        line = RAN_UNDER_TRUST.format(user=user)
-        for card in cards:
-            if ok and card.future.done():
-                await worker_approvals.settle_under_trust(card, line)
-            else:
-                card.answered = False  # not ours to label: its own outcome will be
+        await worker_approvals.settle_claimed(
+            cards, granted=ok, line=RAN_UNDER_TRUST.format(user=user), skip=origin_card
+        )
         if ok:
             origin_live = None  # a grant committed under the fence
         elif origin_live is not None and error == STALE_REASON and not origin_live():
@@ -608,7 +595,14 @@ async def handle_trust_call(orch: Any, payload: dict[str, Any]) -> bool:
         _audit("denied", resources, STALE_REASON)
         await _ephemeral(channel, user, NOT_LIVE_TEXT)
         return True
-    outcome = await set_channel_mode(binding, "trust", user, via="approval_card", still_live=_live)
+    outcome = await set_channel_mode(
+        binding,
+        "trust",
+        user,
+        via="approval_card",
+        still_live=_live,
+        origin_card=f"{channel}:{msg_ts}",
+    )
     if outcome.result not in ("set", "unchanged"):
         await _ephemeral(channel, user, outcome.text)
         return True

@@ -326,3 +326,108 @@ def test_a_decoded_command_is_redacted_again(chan: Any) -> None:  # noqa: F811
     texts = _texts(_card_blocks(chan, raw))
     assert not any(key in t for t in texts)
     assert sum("[REDACTED" in t for t in texts) == 2
+
+
+# ── Review fixes: card text and end states ────────────────────────────────
+
+
+def test_an_unverified_title_stays_on_the_card(chan: Any) -> None:  # noqa: F811
+    asyncio.run(
+        post_linked_approval(
+            chan.slack,
+            CH,
+            None,
+            REQUEST,
+            f"dashboard:{SLOT}",
+            "⚠️ UNVERIFIED child request (security context missing — title is "
+            "agent-authored): Running: git status",
+            json.dumps({"command": "git status"}),
+            channel_trust=True,
+        )
+    )
+    texts = _texts(chan.slack.blocks_posts[-1][1])
+    assert any(t.startswith(":lock:") and "UNVERIFIED" in t for t in texts)
+
+
+def test_a_title_that_says_more_than_the_command_stays(chan: Any) -> None:  # noqa: F811
+    asyncio.run(
+        post_linked_approval(
+            chan.slack,
+            CH,
+            None,
+            REQUEST,
+            f"dashboard:{SLOT}",
+            "Delete the release branch",
+            json.dumps({"command": "git push origin :release"}),
+            channel_trust=True,
+        )
+    )
+    texts = _texts(chan.slack.blocks_posts[-1][1])
+    assert any("Delete the release branch" in t for t in texts)
+
+
+def test_a_command_with_hidden_characters_is_shown_raw(chan: Any) -> None:  # noqa: F811
+    raw = json.dumps({"command": "echo safe\u202e;rm -rf ~"})  # escaped by json.dumps
+    texts = _texts(_card_blocks(chan, raw))
+    assert not any("\u202e" in t for t in texts)
+    assert any("\\u202e" in t for t in texts)
+
+
+def test_the_runner_keeps_a_card_the_trust_rewrote() -> None:
+    """``_run_chat`` asks keep_card before it deletes a linked card (reverting fails)."""
+    import inspect
+
+    from kiro_crew.dashboard import chat_runner
+
+    src = inspect.getsource(chat_runner._run_chat)
+    assert "and not keep_code_channel_card(" in src
+    keep = src.index("and not keep_code_channel_card(")
+    assert src.index("delete_message", keep) > keep
+
+
+def test_a_clicked_channel_card_is_written_once(chan: Any) -> None:  # noqa: F811
+    from test_slack_code_channel_trust_from_slack import _click as _trust_click
+    from test_slack_code_channel_trust_from_slack import _post_card
+
+    ts = _post_card(chan)
+
+    async def go() -> None:
+        fut = asyncio.get_running_loop().create_future()
+        chan.slot._approval_futures["req-7"] = fut
+        assert await approval_picker.handle_trust_call(chan.orch, _trust_click(OWNER, ts))
+
+    asyncio.run(go())
+    mine = [u for u in chan.slack.updates if u[1] == ts]
+    assert len(mine) == 1 and "now on Trust" in mine[0][2]
+    assert approval_picker.keep_card(CH, ts) is True  # and the runner keeps it
+
+
+def test_a_clicked_worker_card_is_written_once(relay: Any) -> None:  # noqa: F811
+    async def go() -> Any:
+        card, fut = await _run_relay(relay)
+        assert await wa.handle_click(relay.orch, _click(OWNER, card, wa.TRUST_ACTION_ID))
+        await wa.finish(_done(card), fut.result(), deny_cause="", host_ended=False)
+        return card
+
+    card = asyncio.run(go())
+    mine = [u for u in relay.slack.updates if u[1] == card.ts]
+    assert len(mine) == 1 and "Ran under Trust" not in mine[0][2]
+
+
+def test_a_claimed_card_rejected_meanwhile_says_so(
+    relay: Any, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    relay.slot._trust = True
+    holder: dict[str, Any] = {}
+    _during_grant(relay, monkeypatch, 1, lambda: holder["fut"].set_result("rejected"))
+
+    async def go() -> Any:
+        card, fut = await _run_relay(relay)
+        holder["fut"] = fut
+        await _set("trust")
+        await wa.finish(_done(card), fut.result(), deny_cause="", host_ended=False)
+        return card
+
+    card = asyncio.run(go())
+    mine = [u for u in relay.slack.updates if u[1] == card.ts]
+    assert len(mine) == 1 and mine[0][2] == wa.ANSWERED_ELSEWHERE["rejected"]

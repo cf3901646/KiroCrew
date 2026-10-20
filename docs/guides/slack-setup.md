@@ -474,8 +474,9 @@ worker's) changes in place to say it ran under Trust. The card shows a command o
 command line, plus the other arguments only when there are any.
 
 **Workers follow the channel's mode.** Changing the channel's approval mode from the first
-message, `/<command> trust` or a **Trust this channel** button changes it for the workers
-the channel's agent is already running as well, raising or lowering it the same way, each
+message, `/<command> trust ask|reads|all` or a **Trust this channel** button changes it
+for the workers the channel's agent is already running as well, raising or lowering it
+the same way, each
 change recorded like the dashboard's. Raising to Trust also answers their waiting tool
 prompts, as switching a session to Trust does on the dashboard. A person-only question
 from a worker is never answered for you. Sessions the agent did not start are left alone.
@@ -487,8 +488,8 @@ arguments, with secrets and suspicious links redacted, and nothing from the work
 conversation. Only you can answer it: **Approve** and **Reject** answer the worker's
 prompt exactly as the dashboard's buttons do, and **Trust this channel** approves it and
 puts the whole channel on Trust, this worker and its siblings included. If the prompt is
-answered in
-the dashboard or nobody answers in time, the card changes to say so and its buttons go.
+answered in the dashboard or nobody answers in time, the card changes to say so and its
+buttons go.
 
 ---
 

@@ -402,7 +402,7 @@ def _build_approval_blocks(
         # line, then the other arguments as JSON only when there are any.
         command, extra = None, None
         if channel_trust:
-            from kiro_crew.slack.code_channels.approval_picker import command_and_rest
+            from kiro_crew.slack.format import command_and_rest
 
             command, extra = command_and_rest(sanitized)
         parts = [command, extra] if command is not None else [sanitized]
@@ -429,9 +429,13 @@ def _build_approval_blocks(
                 },
             )
         if command is not None:
-            # The command is on the card already: the lock line keeps only the
-            # purpose, and goes when there is none.
-            footer = f":lock: {tag}{_esc(purpose)}" if event.tool_purpose else ""
+            from kiro_crew.slack.format import title_restates_command
+
+            if title_restates_command(title_safe, command):
+                # The command is on the card already: the lock line keeps only
+                # the purpose, and goes when there is none. Any other title (an
+                # UNVERIFIED warning above all) stays.
+                footer = f":lock: {tag}{_esc(purpose)}" if event.tool_purpose else ""
 
     blocks.append({"type": "actions", "elements": buttons})
     if footer:
