@@ -37,6 +37,10 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
             node_ids[f"{prefix}:{label}"] = nid
         return nid
 
+    def _contains_cjk(text: str) -> bool:
+        # Check for CJK Unified Ideographs (common range)
+        return any('\u4e00' <= c <= '\u9fff' for c in text)
+
     # --- Preferences ---
     try:
         pref_text = mem.read_preferences() or ""
@@ -123,10 +127,16 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
     # --- History (recent days only) ---
     try:
         hist = mem.read_recent_history(days=14) or ""
+        # Patterns for timestamp and date headers to skip
+        timestamp_re = re.compile(r'^#{1,4}\s+\d{1,2}:\d{2}(?:\s+[A-Z]{2,5})?$')
+        date_re = re.compile(r'^#{1,4}\s+\d{4}-\d{2}-\d{2}$')
         for line in hist.splitlines():
             stripped = line.strip()
             m = re.match(r"^#{1,4}\s+(.+)", stripped)
             if m:
+                # Skip timestamp and date headers
+                if timestamp_re.match(stripped) or date_re.match(stripped):
+                    continue
                 raw = str(_redact_memory_field(m.group(1).strip()))
                 _add("hist", raw[:80], "history", raw)
             elif stripped.startswith("[") and "]" in stripped and len(stripped) > 20:
@@ -186,7 +196,12 @@ def _build_memory_graph(mem: Any, lessons: list) -> tuple[list[dict], list[dict]
             for proj_id, short in project_matchers:
                 if n["id"] == proj_id:
                     continue
-                if re.search(r"\b" + re.escape(short) + r"\b", title_lower):
+                if _contains_cjk(short):
+                    # Match as substring, but require a word boundary before to avoid matching inside a word
+                    pattern = r"\b" + re.escape(short)
+                else:
+                    pattern = r"\b" + re.escape(short) + r"\b"
+                if re.search(pattern, title_lower):
                     edges.append({"from": n["id"], "to": proj_id})
 
     return nodes, edges
